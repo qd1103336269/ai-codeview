@@ -12,7 +12,8 @@
     "typescript"
   ],
   "bin": {
-    "ai-codeview": "dist/bin/ai-codeview.js"
+    "ai-codeview": "dist/bin/ai-codeview.js",
+    "ac": "dist/bin/ai-codeview.js"
   },
   "files": [
     "dist",
