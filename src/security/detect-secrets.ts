@@ -9,6 +9,11 @@ export interface SecretFinding {
   redacted: string;
 }
 
+export interface ReviewTextFile {
+  path: string;
+  content: string;
+}
+
 const secretRules: Array<{ type: SecretFindingType; pattern: RegExp }> = [
   {
     type: "private-key",
@@ -27,6 +32,29 @@ const secretRules: Array<{ type: SecretFindingType; pattern: RegExp }> = [
 
 export function detectSecretsInDiffFiles(files: ReviewFileDiff[]): SecretFinding[] {
   return files.flatMap((file) => detectSecretsInFile(file));
+}
+
+export function detectSecretsInTextFiles(files: ReviewTextFile[]): SecretFinding[] {
+  const findings: SecretFinding[] = [];
+
+  for (const file of files) {
+    const lines = file.content.split(/\r?\n/);
+    for (const [index, line] of lines.entries()) {
+      const matchedRule = secretRules.find((rule) => rule.pattern.test(line));
+      if (!matchedRule) {
+        continue;
+      }
+
+      findings.push({
+        type: matchedRule.type,
+        file: file.path,
+        line: index + 1,
+        redacted: redactSecretLine(line),
+      });
+    }
+  }
+
+  return findings;
 }
 
 function detectSecretsInFile(file: ReviewFileDiff): SecretFinding[] {

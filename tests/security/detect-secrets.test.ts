@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
-import { detectSecretsInDiffFiles } from "../../src/security/detect-secrets.js";
+import { detectSecretsInDiffFiles, detectSecretsInTextFiles } from "../../src/security/detect-secrets.js";
 import type { ReviewFileDiff } from "../../src/diff/parse-git-diff.js";
 
 describe("detectSecretsInDiffFiles", () => {
@@ -35,6 +35,23 @@ describe("detectSecretsInDiffFiles", () => {
       expect.objectContaining({ file: "src/config.ts", type: "private-key" }),
     ]);
     expect(findings.every((finding) => !finding.redacted.includes("1234567890abcdef"))).toBe(true);
+  });
+
+  test("detects likely secrets in plain path-review files", () => {
+    const findings = detectSecretsInTextFiles([
+      {
+        path: "src/config.ts",
+        content: `const deepseekApiKey = "${deepseekLikeApiKey()}";`,
+      },
+    ]);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        file: "src/config.ts",
+        type: "api-key-assignment",
+        line: 1,
+      }),
+    ]);
   });
 
   test("ignores removed secret-looking lines", () => {

@@ -1,7 +1,8 @@
 import OpenAI from "openai";
 import { AppError, isAppError } from "../errors/app-error.js";
+import { sanitizeCommitMessage } from "../review/commit-message.js";
 import { reviewReportSchema, type ReviewReport } from "../review/review-schema.js";
-import type { AiProvider, ReviewRequest } from "./ai-provider.js";
+import type { AiProvider, CommitMessageRequest, ReviewRequest } from "./ai-provider.js";
 
 type ChatCompletionInput = {
   model: string;
@@ -72,11 +73,37 @@ export class DeepSeekProvider implements AiProvider {
     }
   }
 
+  async generateCommitMessage(request: CommitMessageRequest): Promise<string> {
+    const completion = await this.createCompletionWithRetry(this.createCommitMessageInput(request.prompt));
+    const content = getCompletionContent(completion);
+
+    if (!content) {
+      throw new AppError({
+        code: "AI_RESPONSE_INVALID",
+        message: "DeepSeek 返回了空提交信息。",
+        exitCode: 2,
+        recoverable: true,
+      });
+    }
+
+    return sanitizeCommitMessage(content);
+  }
+
   private createReviewInput(prompt: string): ChatCompletionInput {
     return {
       model: this.model,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
+      thinking: { type: this.thinking ? "enabled" : "disabled" },
+      reasoning_effort: this.reasoningEffort,
+      stream: false,
+    };
+  }
+
+  private createCommitMessageInput(prompt: string): ChatCompletionInput {
+    return {
+      model: this.model,
+      messages: [{ role: "user", content: prompt }],
       thinking: { type: this.thinking ? "enabled" : "disabled" },
       reasoning_effort: this.reasoningEffort,
       stream: false,

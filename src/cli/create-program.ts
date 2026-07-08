@@ -2,6 +2,7 @@ import { Chalk } from "chalk";
 import { Command } from "commander";
 import { runConfigCommand as defaultRunConfigCommand } from "../commands/config-command.js";
 import { runInitCommand as defaultRunInitCommand } from "../commands/init-command.js";
+import { runPushCommand as defaultRunPushCommand } from "../commands/push-command.js";
 import { runReviewCommand as defaultRunReviewCommand } from "../commands/review-command.js";
 import type { OutputFormat, Severity } from "../config/config-schema.js";
 
@@ -9,11 +10,13 @@ export interface CreateProgramDeps {
   runReviewCommand?: typeof defaultRunReviewCommand;
   runInitCommand?: typeof defaultRunInitCommand;
   runConfigCommand?: typeof defaultRunConfigCommand;
+  runPushCommand?: typeof defaultRunPushCommand;
 }
 
 interface ReviewCliOptions {
   staged?: boolean;
   base?: string;
+  path?: string[];
   failOn?: Severity;
   format?: OutputFormat;
   output?: string;
@@ -31,6 +34,7 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
   const runReviewCommand = deps.runReviewCommand ?? defaultRunReviewCommand;
   const runInitCommand = deps.runInitCommand ?? defaultRunInitCommand;
   const runConfigCommand = deps.runConfigCommand ?? defaultRunConfigCommand;
+  const runPushCommand = deps.runPushCommand ?? defaultRunPushCommand;
   const program = new Command();
 
   program
@@ -47,13 +51,14 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     })
     .helpOption("-h, --help", "显示命令帮助")
     .helpCommand("help [command]", "显示命令帮助")
-    .version("0.1.0", "-V, --version", "显示版本号");
+    .version("0.2.0", "-V, --version", "显示版本号");
 
   program
     .command("review")
     .description("审查当前 Git 变更")
     .option("--staged", "只审查暂存区变更")
     .option("--base <branch>", "审查当前分支相对 base 分支的变更")
+    .option("--path <path>", "审查指定绝对路径的文件或目录", collectPathOption, [])
     .option("--fail-on <severity>", "当 finding 达到指定严重等级时返回失败退出码")
     .option("--format <format>", "输出格式")
     .option("--output <file>", "把报告写入文件")
@@ -65,6 +70,7 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
         {
           staged: options.staged,
           base: options.base,
+          path: options.path?.length ? options.path : undefined,
           failOn: options.failOn,
           format: options.format,
           output: options.output,
@@ -95,10 +101,48 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     process.stdout.write(`${await runConfigCommand()}\n`);
   });
 
+  program.command("push").description("审查已暂存代码后提交并推送").action(async () => {
+    const result = await runPushCommand(
+      {},
+      {
+        onProgress: (message) => {
+          process.stderr.write(`${formatProgressMessage(message)}\n`);
+        },
+      },
+    );
+    process.stdout.write(`${result.output}\n`);
+    process.exitCode = result.exitCode;
+  });
+
   return program;
 }
 
+function collectPathOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 function formatProgressMessage(message: string): string {
+  if (message.includes("检查 Git 状态")) {
+    return progressChalk.cyan(`🔍 ${message}`);
+  }
+  if (message.includes("已暂存变更")) {
+    return progressChalk.cyan(`📥 ${message}`);
+  }
+  if (message.includes("达到阈值")) {
+    return progressChalk.yellow(`⚠️ ${message}`);
+  }
+  if (message.includes("提交信息")) {
+    return progressChalk.magenta(`🧠 ${message}`);
+  }
+  if (message.includes("Git commit")) {
+    return progressChalk.yellow(`📝 ${message}`);
+  }
+  if (message.includes("远程分支")) {
+    return progressChalk.cyan(`🚀 ${message}`);
+  }
+  if (message.includes("push 流程完成")) {
+    return progressChalk.green(`✅ ${message}`);
+  }
   if (message.includes("开始")) {
     return progressChalk.cyan(`🚀 ${message}`);
   }

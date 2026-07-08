@@ -282,6 +282,35 @@ describe("runReviewCommand", () => {
     expect(result.exitCode).toBe(0);
     expect(provider.review).toHaveBeenCalledTimes(1);
   });
+
+  test("rejects path mode combined with staged mode", async () => {
+    const result = await runReviewCommand(
+      { staged: true, path: ["E:\\code\\demo\\src\\a.ts"], format: "text" },
+      { provider: providerReturningPass() },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("不能同时使用");
+  });
+
+  test("reviews absolute path input without collecting git diff", async () => {
+    const cwd = await makeTempDir();
+    const sourceDir = join(cwd, "src");
+    await mkdir(sourceDir, { recursive: true });
+    const sourceFile = join(sourceDir, "a.ts");
+    await writeFile(sourceFile, "export const a = 1;\n", "utf8");
+    const collectGitDiff = vi.fn();
+    const provider = providerReturningPass();
+
+    const result = await runReviewCommand(
+      { path: [sourceFile], format: "text" },
+      { collectGitDiff, provider, cwd },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(collectGitDiff).not.toHaveBeenCalled();
+    expect(provider.review).toHaveBeenCalledTimes(1);
+  });
 });
 
 function collectGitDiffWithChange() {

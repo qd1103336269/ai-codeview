@@ -58,7 +58,6 @@ MVP 不做：
 
 后续范围：
 
-- 审查指定文件或目录。
 - 审查 Git commit 或 commit range。
 - 审查 GitHub Pull Request。
 - 审查 GitLab Merge Request。
@@ -68,6 +67,11 @@ MVP 不做：
 - 交互式修复规划。
 - 已知问题 baseline 和 suppression。
 - 仓库级自定义审查规则。
+
+版本 0.2 当前范围：
+
+- 审查指定绝对路径的代码文件或目录。
+- 新增 `ai-codeview push`，只审查已暂存代码，审查通过或用户确认后生成中文提交信息、提交并推送。
 
 ## 4. CLI 命令设计
 
@@ -114,6 +118,19 @@ ai-codeview review --fail-on high
 ```
 
 当发现大于等于指定严重等级的问题时，返回退出码 `1`。
+
+```bash
+ai-codeview review --path E:\code\demo\src\index.ts
+ai-codeview review --path E:\code\demo\src
+```
+
+审查指定绝对路径的文件或目录。`--path` 可以重复传入，但每个路径必须是绝对路径。`--path` 不能与 `--staged`、`--base` 同时使用，因为路径审查读取文件当前内容，而 Git 模式审查 diff。
+
+```bash
+ai-codeview push
+```
+
+只审查已暂存代码，不自动 `git add`。如果审查结果达到 `failOn` 阈值，则展示报告并询问用户是否继续。继续后由 AI 生成中文 commit message，用户确认或编辑后才执行 `git commit` 和 `git push`。
 
 ```bash
 ai-codeview init
@@ -427,6 +444,7 @@ AI 集成：
 | 终端表格 | `cli-table3` | 渲染 finding 摘要、严重等级统计等表格。 |
 | 重试 | `p-retry` | Provider 请求失败或 AI 返回结构可修复时做有限重试。 |
 | 并发控制 | `p-limit` | 多 chunk 审查时限制并发，避免请求过多或超限。 |
+| 交互式命令 | `@inquirer/prompts` | 用于 `push` 命令中的继续确认、提交信息确认和编辑。 |
 
 ### 10.3 MVP 开发依赖
 
@@ -449,10 +467,9 @@ AI 集成：
 
 | 用途 | npm 包 | 阶段 |
 | --- | --- | --- |
-| 文件/目录扫描 | `globby` | 版本 0.2。 |
 | GitHub PR 接入 | `@octokit/rest` | 版本 0.3。 |
 | GitLab MR 接入 | `@gitbeaker/rest` | 版本 0.3。 |
-| 交互式命令 | `@inquirer/prompts` | 交互式修复模式。 |
+| 文件/目录快速扫描 | `fast-glob` 或 Node.js `fs` 递归 | 版本 0.2 可选；如果 Node 原生递归能力足够，优先不新增依赖。 |
 | 本地缓存 | `cacache` 或 `keyv` | 基线、provider 响应缓存或规则缓存。 |
 | JSON schema 输出 | `zod-to-json-schema` | 给 CI 或外部工具导出报告 schema。 |
 
@@ -490,6 +507,11 @@ ai-codeview review --no-color
 - 终端 text 输出自动检测颜色支持。
 - Markdown 和 JSON 输出默认不包含 ANSI 颜色。
 - CI 环境默认减少 spinner 和动态输出，保留稳定文本。
+
+0.2 进度信息：
+
+- 路径审查：`📂 校验输入路径...`、`📄 读取代码文件...`、`🔍 过滤无需审查的文件...`、`🤖 调用 DeepSeek 审查...`、`✅ 路径审查完成`。
+- Push 命令：`🔍 检查 Git 状态...`、`📥 收集已暂存变更...`、`🤖 调用 DeepSeek 审查代码...`、`⚠️ 发现达到阈值的问题，等待用户确认...`、`🧠 生成中文提交信息...`、`📝 创建 Git commit...`、`🚀 推送到远程分支...`、`✅ push 流程完成`。
 
 ### 10.7 Chalk vs picocolors 对比
 
@@ -670,6 +692,9 @@ AI 必须输出置信度：
 | 输入 | 没有可审查 diff | 输出 no-op 信息，不调用 DeepSeek | `0` | 否 | 集成测试 |
 | 输入 | `--staged` 但没有 staged diff | 输出 staged no-op 信息 | `0` | 否 | 集成测试 |
 | 输入 | `--base main` 找不到 base 分支 | 提示 base 不存在或需要 fetch | `2` | 否 | 单元测试 |
+| 输入 | `--path` 不是绝对路径 | 提示必须传入绝对路径 | `2` | 否 | 单元测试 |
+| 输入 | `--path` 指向不存在路径 | 提示路径不存在 | `2` | 否 | 单元测试 |
+| 输入 | `--path` 与 `--staged` 或 `--base` 同时使用 | 提示输入来源冲突 | `2` | 否 | 单元测试 |
 | 输入 | diff 体积超过上限 | 提示缩小范围，或后续支持 `--max-files` / `--max-tokens` | `2` | 否 | 单元测试 |
 | 输入 | 文件路径包含空格或特殊字符 | 正常处理，不应误切分路径 | 取决于结果 | 否 | Diff parser 单元测试 |
 | Diff | 二进制文件变更 | 跳过并在摘要中说明 skipped binary files | `0` 或 `1` | 否 | 单元测试 |
@@ -695,6 +720,11 @@ AI 必须输出置信度：
 | 输出 | JSON 输出包含 ANSI 颜色 | 不允许，测试中用 `strip-ansi` 校验 | `2` 或测试失败 | 否 | 黄金样例测试 |
 | CI | CI 环境中 spinner 导致日志混乱 | 自动关闭动态 spinner，输出稳定文本 | 取决于结果 | 否 | 单元测试 |
 | 隐私 | diff 中疑似包含 secret | 警告用户，并可后续支持阻断云端请求 | `0`、`1` 或 `2` | 否 | 单元测试 |
+| Push | 没有已暂存变更 | 提示先执行 `git add` | `2` | 否 | 单元测试 |
+| Push | 审查达到 `failOn` 阈值且用户取消 | 不 commit、不 push | `1` | 否 | 单元测试 |
+| Push | 用户取消提交信息确认 | 不 commit、不 push | `1` | 否 | 单元测试 |
+| Push | `git commit` 失败 | 提示 Git commit 失败摘要 | `2` | 否 | 单元测试 |
+| Push | `git push` 失败 | 提示 Git push 失败摘要 | `2` | 否 | 单元测试 |
 
 ### 14.4 错误对象模型
 
@@ -802,6 +832,144 @@ ai-codeview review --format json
 ai-codeview review --fail-on high
 ```
 
+当前版本完整测试流程：
+
+以下流程只覆盖 0.1 和 0.2 的本地能力，不包含 0.3 的 CI、PR/MR、commit range、baseline 或 suppression。
+
+1. 基础自动化检查：
+
+```bash
+pnpm lint
+pnpm test
+pnpm build
+```
+
+通过标准：
+
+- `lint` 无错误。
+- `test` 全部通过，不允许只跑单个文件后直接判定版本可发布。
+- `build` 成功生成 `dist`，`bin` 入口可被 Node 执行。
+
+2. 按能力分组回归：
+
+```bash
+pnpm test -- tests/cli/create-program.test.ts tests/commands/init-command.test.ts tests/config/load-config.test.ts tests/errors/app-error.test.ts
+pnpm test -- tests/git/git-client.test.ts tests/diff/parse-git-diff.test.ts tests/diff/filter-review-files.test.ts tests/diff/chunk-review-input.test.ts
+pnpm test -- tests/review/prompt-builder.test.ts tests/review/review-orchestrator.test.ts tests/providers/deepseek-provider.test.ts
+pnpm test -- tests/report/renderers.test.ts tests/report/exit-code.test.ts tests/security/detect-secrets.test.ts
+pnpm test -- tests/input/path-input.test.ts tests/cli/review-command.test.ts
+pnpm test -- tests/commands/push-command.test.ts tests/review/commit-message.test.ts
+```
+
+覆盖关系：
+
+- CLI、配置、错误：`create-program`、`init-command`、`load-config`、`app-error`。
+- Git diff 输入：`git-client`、`parse-git-diff`、`filter-review-files`、`chunk-review-input`。
+- AI 审查链路：`prompt-builder`、`review-orchestrator`、`deepseek-provider`。
+- 输出和 gate：`renderers`、`exit-code`。
+- 隐私安全：`detect-secrets`。
+- 0.2 路径审查：`path-input`、`review-command`。
+- 0.2 push 流程：`push-command`、`commit-message`。
+
+3. 不依赖真实 DeepSeek 的 CLI 冒烟：
+
+在一个干净的临时 Git 仓库中执行，重点验证命令入口、配置读取、无 diff 行为和输出格式。
+
+```bash
+pnpm dev -- init --force
+pnpm dev -- config
+pnpm dev -- review --format json
+```
+
+通过标准：
+
+- `init --force` 可以生成或覆盖 `.ai-codeview.json`。
+- `config` 能打印最终生效配置，且不泄露 API key。
+- 无 diff 时 `review --format json` 返回清楚 no-op 结果，不调用 DeepSeek。
+
+4. 真实 DeepSeek 手动冒烟：
+
+执行前设置环境变量，并只使用无敏感信息的小变更。
+
+```powershell
+$env:DEEPSEEK_API_KEY = "<your-deepseek-api-key>"
+pnpm dev -- review
+pnpm dev -- review --staged
+pnpm dev -- review --format markdown
+pnpm dev -- review --format json
+pnpm dev -- review --fail-on high
+pnpm dev -- review --path E:\code\demo\src\index.ts
+pnpm dev -- review --path E:\code\demo\src
+```
+
+通过标准：
+
+- `review` 能审查当前 Git diff。
+- `review --staged` 只审查已暂存 diff。
+- `markdown`、`json` 输出格式稳定，JSON 可被解析。
+- `--fail-on high` 在存在 high 或 critical finding 时返回退出码 `1`，否则返回 `0`。
+- `--path` 可以审查绝对路径文件和目录，并在发送给 DeepSeek 前执行过滤和敏感信息扫描。
+
+5. `push` 命令安全冒烟：
+
+`push` 会真实执行 `git commit` 和 `git push`，必须在临时仓库和临时远程仓库中验证。推荐先 `pnpm build`，然后在临时工作仓库里调用构建后的 CLI。
+
+```powershell
+pnpm build
+
+mkdir E:\tmp\acv-smoke-remote.git
+git init --bare E:\tmp\acv-smoke-remote.git
+git clone E:\tmp\acv-smoke-remote.git E:\tmp\acv-smoke-work
+cd E:\tmp\acv-smoke-work
+git config user.name "AI Codeview Smoke"
+git config user.email "smoke@example.com"
+
+"console.log('smoke')" > index.js
+git add index.js
+node E:\code\ai\ai-codeview\dist\bin\ai-codeview.js push
+git log --oneline -1
+git status --short
+```
+
+通过标准：
+
+- 没有暂存变更时，`push` 返回退出码 `2`，不 commit、不 push。
+- 有暂存变更时，`push` 只审查 staged diff，不自动 `git add` 未暂存文件。
+- 审查达到 `failOn` 阈值时，先展示报告并询问是否继续。
+- 用户取消风险确认、提交信息确认或编辑流程时，不执行 commit 和 push。
+- AI 生成中文 commit message，用户确认或编辑后执行 `git commit`。
+- commit 成功后执行 `git push`，临时远程仓库能看到新提交。
+- `git commit` 或 `git push` 失败时返回退出码 `2`，并给出清楚错误。
+
+6. 反向和安全用例：
+
+```powershell
+pnpm dev -- review --path src
+pnpm dev -- review --path E:\not-exist\missing.ts
+pnpm dev -- review --path E:\code\demo\src\index.ts --staged
+pnpm dev -- review --path E:\code\demo\src\index.ts --base main
+pnpm dev -- push
+```
+
+通过标准：
+
+- 相对路径、缺失路径、`--path` 与 Git diff 输入模式冲突时返回退出码 `2`。
+- 命中疑似密钥时，默认阻断发送到 DeepSeek；只有显式 `--allow-secrets` 或配置放行后才继续。
+- `push` 在没有 staged diff 时返回清楚提示，不创建提交。
+
+7. 0.1/0.2 验收映射：
+
+| 能力 | 必跑验证 |
+| --- | --- |
+| 本地 Git diff 审查 | `pnpm test`，真实 `pnpm dev -- review` 冒烟 |
+| staged diff 审查 | `git-client`、`review-command` 测试，真实 `pnpm dev -- review --staged` 冒烟 |
+| Text/Markdown/JSON 输出 | `renderers` 测试，真实 `--format markdown`、`--format json` 冒烟 |
+| 配置文件 | `load-config`、`init-command` 测试，真实 `init`、`config` 冒烟 |
+| DeepSeek provider | `deepseek-provider` mock 测试，真实 DeepSeek 小 diff 冒烟 |
+| 严重等级 gate | `exit-code` 测试，真实 `--fail-on high` 冒烟 |
+| `review --path <absolute-path>` | `path-input`、`review-command` 测试，真实文件和目录路径冒烟 |
+| `ai-codeview push` | `push-command`、`commit-message` 测试，临时 bare remote 冒烟 |
+
 ## 17. MVP 里程碑
 
 1. CLI 骨架：项目初始化、命令解析、配置加载、基础终端输出。
@@ -823,18 +991,22 @@ ai-codeview review --fail-on high
 
 版本 0.2：
 
-- 文件和目录审查。
-- Commit range 审查。
-- 更多 provider 适配器。
-- 更好的 token 预算。
-- 基线抑制。
+- 通过 `review --path <absolute-path>` 审查指定绝对路径的文件或目录。
+- 新增 `push` 命令，只处理已暂存代码。
+- Push 前先审查 staged diff，达到 `failOn` 阈值时询问是否继续。
+- 使用 DeepSeek 生成中文 commit message，用户确认或编辑后再提交。
+- 提交成功后执行 `git push`。
 
 版本 0.3：
 
+- Commit range 审查。
 - GitHub PR 审查。
 - GitLab MR 审查。
 - 行内审查评论。
 - CI 模板。
+- 更多 provider 适配器。
+- 更好的 token 预算。
+- 基线抑制。
 
 版本 0.4：
 
@@ -863,6 +1035,9 @@ ai-codeview review --fail-on high
 - MVP 默认 provider 为 `deepseek`。
 - MVP 默认模型为 `deepseek-v4-pro`。
 - API key 通过 `DEEPSEEK_API_KEY` 读取。
+- 0.2 的 `push` 命令只处理已暂存代码，不自动 `git add`。
+- 0.2 的 commit message 使用中文，提交前必须等待用户确认，并支持用户编辑。
+- 0.2 的审查阻断策略默认只在达到 `failOn` 阈值时询问是否继续。
 
 ## 20. MVP 验收标准
 
@@ -876,4 +1051,15 @@ MVP 达成的标准：
 - `--format json` 输出合法 JSON。
 - 默认报告输出到终端，`--output review.md` 可以写入 Markdown 报告。
 - 切换 AI provider 不需要改 CLI、Git、diff、report 模块。
+
+0.2 验收标准：
+
+- `ai-codeview review --path <absolute-path>` 可以审查指定文件或目录。
+- 非绝对路径、路径不存在、`--path` 与 Git diff 输入模式冲突时返回清楚错误。
+- 路径审查默认执行敏感信息扫描，命中疑似密钥时不发送给 DeepSeek。
+- `ai-codeview push` 只读取 staged diff，没有暂存变更时不提交、不推送。
+- `push` 审查达到 `failOn` 阈值时询问用户是否继续。
+- 用户取消风险确认、提交信息确认或编辑流程时，不执行 commit 和 push。
+- AI 生成中文 commit message，用户可确认或编辑后继续。
+- `git commit` 和 `git push` 失败时返回退出码 `2` 并给出清楚提示。
 

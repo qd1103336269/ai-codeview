@@ -11,6 +11,15 @@ export interface CollectGitDiffInput {
   run?: RunCommand;
 }
 
+export interface CommitStagedChangesInput {
+  message: string;
+  run?: RunCommand;
+}
+
+export interface PushCurrentBranchInput {
+  run?: RunCommand;
+}
+
 const defaultRun: RunCommand = async (file, args) => {
   return execa(file, args);
 };
@@ -41,6 +50,40 @@ export async function collectGitDiff(input: CollectGitDiffInput): Promise<string
       exitCode: 2,
       recoverable: false,
       suggestion: "请安装 Git，并确认它已经加入 PATH。",
+      details: error,
+    });
+  }
+}
+
+export async function commitStagedChanges(input: CommitStagedChangesInput): Promise<void> {
+  const run = input.run ?? defaultRun;
+
+  try {
+    await run("git", ["commit", "-m", input.message]);
+  } catch (error) {
+    throw new AppError({
+      code: "GIT_COMMIT_FAILED",
+      message: "Git commit 执行失败。",
+      exitCode: 2,
+      recoverable: false,
+      suggestion: "请检查暂存区、提交钩子和 Git 配置后重试。",
+      details: error,
+    });
+  }
+}
+
+export async function pushCurrentBranch(input: PushCurrentBranchInput = {}): Promise<void> {
+  const run = input.run ?? defaultRun;
+
+  try {
+    await run("git", ["push"]);
+  } catch (error) {
+    throw new AppError({
+      code: "GIT_PUSH_FAILED",
+      message: "Git push 执行失败。",
+      exitCode: 2,
+      recoverable: false,
+      suggestion: "请检查远程仓库、网络、认证和 upstream 配置后重试。",
       details: error,
     });
   }

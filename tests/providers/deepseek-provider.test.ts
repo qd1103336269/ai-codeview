@@ -165,6 +165,21 @@ describe("DeepSeekProvider", () => {
     });
     expect(create).toHaveBeenCalledTimes(2);
   });
+
+  test("generates sanitized Chinese commit message", async () => {
+    const create = vi.fn().mockResolvedValue(completion("```text\nfeat: 增加推送前审查\n```"));
+    const provider = createProvider(create);
+
+    const message = await provider.generateCommitMessage({ prompt: "生成中文提交信息" });
+
+    expect(message).toBe("feat: 增加推送前审查");
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [{ role: "user", content: "生成中文提交信息" }],
+        stream: false,
+      }),
+    );
+  });
 });
 
 function createProvider(createChatCompletion: CreateChatCompletion) {

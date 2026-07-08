@@ -3,6 +3,8 @@ export type AppErrorCode =
   | "GIT_NOT_FOUND"
   | "NO_DIFF"
   | "INVALID_CONFIG"
+  | "INVALID_PATH_INPUT"
+  | "PATH_NOT_FOUND"
   | "MISSING_API_KEY"
   | "SECRET_DETECTED"
   | "PROVIDER_AUTH_FAILED"
@@ -12,6 +14,8 @@ export type AppErrorCode =
   | "DIFF_TOO_LARGE"
   | "AI_RESPONSE_INVALID"
   | "OUTPUT_WRITE_FAILED"
+  | "GIT_COMMIT_FAILED"
+  | "GIT_PUSH_FAILED"
   | "UNKNOWN_ERROR";
 
 export type AppExitCode = 0 | 1 | 2;

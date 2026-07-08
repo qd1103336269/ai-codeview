@@ -13,22 +13,45 @@ $env:DEEPSEEK_API_KEY = "你的 DeepSeek API Key"
 
 ## 常用命令
 
+已发布包可以直接使用：
+
+```bash
+ai-codeview review
+ai-codeview review --staged
+ai-codeview review --base main
+ai-codeview review --path E:\code\demo\src\index.ts
+ai-codeview review --format markdown --output review.md
+ai-codeview push
+ai-codeview init
+ai-codeview config
+```
+
+本地开发时使用：
+
 ```bash
 pnpm dev -- review
 pnpm dev -- review --staged
 pnpm dev -- review --base main
+pnpm dev -- review --path E:\code\demo\src\index.ts
 pnpm dev -- review --fail-on medium
 pnpm dev -- review --format json
 pnpm dev -- review --format markdown --output review.md
 pnpm dev -- review --color
 pnpm dev -- review --no-color
 pnpm dev -- review --allow-secrets
+pnpm dev -- push
 pnpm dev -- init
 pnpm dev -- init --force
 pnpm dev -- config
 ```
 
 `review` 默认读取当前 Git 工作区变更，并把 Markdown 审查报告输出到终端。需要写入文件时，显式传入 `--output <file>`。
+
+`review --path` 用于审查指定绝对路径的文件或目录。路径必须是绝对路径，不能与 `--staged`、`--base` 同时使用。
+
+`push` 用于提交和推送已暂存代码。它只处理 staged diff，不会自动执行 `git add`。流程是：审查已暂存代码；达到 `failOn` 阈值时询问是否继续；通过或用户确认后生成中文 commit message；用户确认或编辑后执行 `git commit` 和 `git push`。
+
+完整设计见：`docs/superpowers/specs/2026-07-07-ai-codeview-path-review-and-push-design.md`。
 
 ## 配置文件
 
@@ -76,6 +99,8 @@ node dist/bin/ai-codeview.js config
 
 - 审查本地 Git 工作区变更。
 - 审查暂存区变更和 `base...HEAD` 分支差异。
+- 审查指定绝对路径的文件或目录。
+- 审查已暂存代码后生成中文提交信息、提交并推送。
 - 使用 DeepSeek 作为 AI 审查提供方。
 - 支持文本、Markdown、JSON 三种报告格式。
 - 支持通过 `--output` 把报告写入文件。

@@ -32,6 +32,7 @@ describe("createProgram", () => {
     expect(runReviewCommand).toHaveBeenCalledWith({
       staged: undefined,
       base: "main",
+      path: undefined,
       failOn: "medium",
       format: "json",
       output: "review.json",
@@ -64,6 +65,57 @@ describe("createProgram", () => {
     expect(stripAnsi(firstProgress)).toBe("🚀 开始进行代码 review...\n");
     expect(stripAnsi(secondProgress)).toBe("🤖 调用 DeepSeek 审查分块 1/1...\n");
     expect(stdoutWrite).toHaveBeenCalledWith("AI 代码审查报告\n");
+    stdoutWrite.mockRestore();
+    stderrWrite.mockRestore();
+  });
+
+  test("passes repeated review --path values to review command handler", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const runReviewCommand = vi.fn().mockResolvedValue({ exitCode: 0, output: "ok" });
+    const program = createProgram({ runReviewCommand });
+
+    await program.parseAsync(
+      [
+        "review",
+        "--path",
+        "E:\\code\\demo\\src\\a.ts",
+        "--path",
+        "E:\\code\\demo\\src\\b.ts",
+      ],
+      { from: "user" },
+    );
+
+    expect(runReviewCommand).toHaveBeenCalledWith({
+      staged: undefined,
+      base: undefined,
+      path: ["E:\\code\\demo\\src\\a.ts", "E:\\code\\demo\\src\\b.ts"],
+      failOn: undefined,
+      format: undefined,
+      output: undefined,
+      color: undefined,
+      allowSecrets: undefined,
+    }, expect.objectContaining({ onProgress: expect.any(Function) }));
+    write.mockRestore();
+    stderrWrite.mockRestore();
+  });
+
+  test("runs push command handler", async () => {
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const runPushCommand = vi.fn().mockImplementation((_options, deps) => {
+      deps.onProgress("检查 Git 状态...");
+      deps.onProgress("生成中文提交信息...");
+      return Promise.resolve({ exitCode: 0, output: "提交和推送完成。" });
+    });
+    const program = createProgram({ runPushCommand });
+
+    await program.parseAsync(["push"], { from: "user" });
+
+    expect(runPushCommand).toHaveBeenCalledWith({}, expect.objectContaining({ onProgress: expect.any(Function) }));
+    expect(stripAnsi(stderrWrite.mock.calls[0]?.[0]?.toString() ?? "")).toBe("🔍 检查 Git 状态...\n");
+    expect(stripAnsi(stderrWrite.mock.calls[1]?.[0]?.toString() ?? "")).toBe("🧠 生成中文提交信息...\n");
+    expect(stdoutWrite).toHaveBeenCalledWith("提交和推送完成。\n");
     stdoutWrite.mockRestore();
     stderrWrite.mockRestore();
   });
