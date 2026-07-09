@@ -1,6 +1,6 @@
 {
   "name": "ai-codeview",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "面向中文用户的 DeepSeek AI 代码审查 CLI。",
   "type": "module",
   "keywords": [
@@ -13,7 +13,8 @@
   ],
   "bin": {
     "ai-codeview": "dist/bin/ai-codeview.js",
-    "ac": "dist/bin/ai-codeview.js"
+    "ac": "dist/bin/ai-codeview.js",
+    "acv": "dist/bin/ai-codeview.js"
   },
   "files": [
     "dist",

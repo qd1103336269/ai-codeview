@@ -166,6 +166,29 @@ describe("runPushCommand", () => {
     expect(pushCurrentBranch).not.toHaveBeenCalled();
   });
 
+  test("does not prompt for risk confirmation in non-interactive mode", async () => {
+    const confirmRisk = vi.fn();
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+
+    const result = await runPushCommand(
+      { nonInteractive: true },
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider: providerReturning(failReport(), "fix: x"),
+        confirmRisk,
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain("达到阈值");
+    expect(confirmRisk).not.toHaveBeenCalled();
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
   test("returns an error when stage confirmation fails with a non-cancellation error", async () => {
     const stageAllChanges = vi.fn();
     const commitStagedChanges = vi.fn();
@@ -255,6 +278,123 @@ describe("runPushCommand", () => {
     );
     expect(commitStagedChanges).toHaveBeenCalledWith({ message: "feat: 增加推送前审查" });
     expect(pushCurrentBranch).toHaveBeenCalledWith();
+  });
+
+  test("uses provided commit message without asking AI to generate one", async () => {
+    const commitStagedChanges = vi.fn().mockResolvedValue(undefined);
+    const pushCurrentBranch = vi.fn().mockResolvedValue(undefined);
+    const provider = providerReturning(passReport(), "feat: 不应使用这个提交信息");
+
+    const result = await runPushCommand(
+      { message: "feat: 使用用户指定提交信息" },
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider,
+        confirmCommitMessage: vi.fn(),
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(provider.review).toHaveBeenCalledTimes(1);
+    expect(provider.generateCommitMessage).not.toHaveBeenCalled();
+    expect(commitStagedChanges).toHaveBeenCalledWith({ message: "feat: 使用用户指定提交信息" });
+    expect(pushCurrentBranch).toHaveBeenCalledTimes(1);
+  });
+
+  test("uses generated commit message without confirmation in non-interactive mode", async () => {
+    const commitStagedChanges = vi.fn().mockResolvedValue(undefined);
+    const pushCurrentBranch = vi.fn().mockResolvedValue(undefined);
+    const confirmCommitMessage = vi.fn();
+    const provider = providerReturning(passReport(), "feat: 自动使用生成信息");
+
+    const result = await runPushCommand(
+      { nonInteractive: true },
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider,
+        confirmCommitMessage,
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(provider.generateCommitMessage).toHaveBeenCalledTimes(1);
+    expect(confirmCommitMessage).not.toHaveBeenCalled();
+    expect(commitStagedChanges).toHaveBeenCalledWith({ message: "feat: 自动使用生成信息" });
+    expect(pushCurrentBranch).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not commit or push in dry-run mode", async () => {
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+    const confirmCommitMessage = vi.fn();
+    const provider = providerReturning(passReport(), "feat: 预演提交信息");
+
+    const result = await runPushCommand(
+      { dryRun: true },
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider,
+        confirmCommitMessage,
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("dry-run");
+    expect(result.output).toContain("feat: 预演提交信息");
+    expect(confirmCommitMessage).not.toHaveBeenCalled();
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
+  test("does not prompt for risk confirmation in dry-run mode", async () => {
+    const confirmRisk = vi.fn();
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+
+    const result = await runPushCommand(
+      { dryRun: true },
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider: providerReturning(failReport(), "fix: x"),
+        confirmRisk,
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain("dry-run 审查结果达到阈值");
+    expect(confirmRisk).not.toHaveBeenCalled();
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
+  test("commits but does not push in no-push mode", async () => {
+    const commitStagedChanges = vi.fn().mockResolvedValue(undefined);
+    const pushCurrentBranch = vi.fn();
+    const provider = providerReturning(passReport(), "feat: 只提交不推送");
+
+    const result = await runPushCommand(
+      { noPush: true },
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider,
+        confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("提交完成，未推送");
+    expect(commitStagedChanges).toHaveBeenCalledWith({ message: "feat: 只提交不推送" });
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
   });
 
   test("uses edited commit message", async () => {

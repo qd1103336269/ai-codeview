@@ -1,7 +1,7 @@
 import { execa } from "execa";
 import { AppError } from "../errors/app-error.js";
 
-export type GitDiffMode = "working-tree" | "staged" | "base";
+export type GitDiffMode = "working-tree" | "changed" | "staged" | "base";
 
 export type RunCommand = (file: string, args: string[]) => Promise<{ stdout: string }>;
 
@@ -156,6 +156,9 @@ function isCommandNotFound(error: unknown): boolean {
 function getDiffArgs(input: CollectGitDiffInput): string[] {
   if (input.mode === "staged") {
     return ["diff", "--staged"];
+  }
+  if (input.mode === "changed") {
+    return ["diff", "HEAD"];
   }
   if (input.mode === "base") {
     if (!input.base?.trim()) {

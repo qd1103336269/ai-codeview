@@ -6,6 +6,9 @@ export type Severity = z.infer<typeof severitySchema>;
 export const outputFormatSchema = z.enum(["text", "markdown", "json"]);
 export type OutputFormat = z.infer<typeof outputFormatSchema>;
 
+export const reportLanguageSchema = z.enum(["zh-CN", "en-US"]);
+export type ReportLanguage = z.infer<typeof reportLanguageSchema>;
+
 export const aiCodeviewConfigSchema = z.object({
   provider: z.literal("deepseek").default("deepseek"),
   model: z
@@ -15,6 +18,7 @@ export const aiCodeviewConfigSchema = z.object({
   apiKeyEnv: z.string().min(1).default("DEEPSEEK_API_KEY"),
   thinking: z.boolean().default(true),
   reasoningEffort: z.enum(["high", "max"]).default("high"),
+  reportLanguage: reportLanguageSchema.default("zh-CN"),
   failOn: severitySchema.default("high"),
   confidenceFloor: z.enum(["high", "medium", "low"]).default("medium"),
   review: z

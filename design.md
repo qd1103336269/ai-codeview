@@ -68,10 +68,18 @@ MVP 不做：
 - 已知问题 baseline 和 suppression。
 - 仓库级自定义审查规则。
 
-版本 0.2 当前范围：
+版本 0.3 当前范围：
 
-- 审查指定绝对路径的代码文件或目录。
-- 新增 `ai-codeview push`，只审查已暂存代码，审查通过或用户确认后生成中文提交信息、提交并推送。
+- 审查指定相对路径或绝对路径的代码文件或目录。
+- 新增推荐短命令 `acv`，同时保留 `ai-codeview` 和兼容短命令 `ac`。
+- 增强 `ai-codeview push`，支持 `--dry-run`、`--no-push`、`--message` 和 `--non-interactive`。
+- 新增 `ai-codeview doctor`，用于检查本地环境、配置、API Key、Git 仓库和 remote；remote 缺失只作为提醒，不阻断 `review`。
+
+版本 0.4 当前范围：
+
+- 新增 `review --changed`，显式审查 staged + unstaged 的全部本地变更。
+- 新增 `review --summary`，只输出风险摘要和 finding 列表。
+- 新增 `reportLanguage` 配置，默认 `zh-CN`，可切换到 `en-US`。
 
 ## 4. CLI 命令设计
 
@@ -79,7 +87,13 @@ MVP 不做：
 ai-codeview review
 ```
 
-审查当前工作区变更，包括未暂存和已暂存变更。
+审查当前工作区相对暂存区的 diff，即 `git diff`。
+
+```bash
+ai-codeview review --changed
+```
+
+显式审查 staged + unstaged 的全部本地变更，适合不想区分暂存区和工作区时使用。
 
 ```bash
 ai-codeview review --staged
@@ -102,6 +116,12 @@ ai-codeview review --format json
 控制输出格式。
 
 ```bash
+ai-codeview review --summary
+```
+
+只输出风险摘要和 finding 列表，不输出详细 reason、suggestion 和 learning note。
+
+```bash
 ai-codeview review --output review.md
 ```
 
@@ -120,11 +140,11 @@ ai-codeview review --fail-on high
 当发现大于等于指定严重等级的问题时，返回退出码 `1`。
 
 ```bash
-ai-codeview review --path E:\code\demo\src\index.ts
+ai-codeview review --path src\index.ts
 ai-codeview review --path E:\code\demo\src
 ```
 
-审查指定绝对路径的文件或目录。`--path` 可以重复传入，但每个路径必须是绝对路径。`--path` 不能与 `--staged`、`--base` 同时使用，因为路径审查读取文件当前内容，而 Git 模式审查 diff。
+审查指定路径的文件或目录，支持相对路径和绝对路径。`--path` 可以重复传入。`--path` 不能与 `--staged`、`--base` 同时使用，因为路径审查读取文件当前内容，而 Git 模式审查 diff。
 
 ```bash
 ai-codeview push
@@ -136,7 +156,21 @@ ai-codeview push
 ai-codeview push --non-interactive
 ```
 
-用于脚本或 CI 环境。禁用暂存确认；如果没有 staged diff 但存在未暂存修改，直接返回退出码 `2`，提示用户先手动执行 `git add`，不自动暂存、不提交、不推送。
+用于脚本或 CI 环境。禁用暂存确认、风险确认和提交信息确认；如果没有 staged diff 但存在未暂存修改，直接返回退出码 `2`，提示用户先手动执行 `git add`，不自动暂存、不提交、不推送。若审查达到 `failOn` 阈值，直接返回退出码 `1` 并中止。
+
+```bash
+ai-codeview push --dry-run
+ai-codeview push --no-push
+ai-codeview push --message "feat: 更新代码审查流程"
+```
+
+`--dry-run` 只执行审查和提交信息生成，不创建 commit、不执行 push，也不发起风险确认或提交信息确认；若审查达到 `failOn` 阈值，返回退出码 `1` 并输出报告。`--no-push` 创建 commit 后跳过 `git push`。`--message` 使用用户指定的提交信息，跳过 AI 生成和提交信息确认，适合脚本或自动化场景。
+
+```bash
+ai-codeview doctor
+```
+
+检查本地运行环境和配置，包括 Node.js、Git、Git 仓库、配置文件、DeepSeek API Key 和 Git remote。Git remote 缺失会显示 warning，但不会让 `doctor` 返回失败；Node、Git、仓库、配置或 API Key 缺失等硬错误返回退出码 `2`。
 
 ```bash
 ai-codeview init
@@ -473,8 +507,8 @@ AI 集成：
 
 | 用途 | npm 包 | 阶段 |
 | --- | --- | --- |
-| GitHub PR 接入 | `@octokit/rest` | 版本 0.3。 |
-| GitLab MR 接入 | `@gitbeaker/rest` | 版本 0.3。 |
+| GitHub PR 接入 | `@octokit/rest` | 后续版本。 |
+| GitLab MR 接入 | `@gitbeaker/rest` | 后续版本。 |
 | 文件/目录快速扫描 | `fast-glob` 或 Node.js `fs` 递归 | 版本 0.2 可选；如果 Node 原生递归能力足够，优先不新增依赖。 |
 | 本地缓存 | `cacache` 或 `keyv` | 基线、provider 响应缓存或规则缓存。 |
 | JSON schema 输出 | `zod-to-json-schema` | 给 CI 或外部工具导出报告 schema。 |
@@ -698,7 +732,7 @@ AI 必须输出置信度：
 | 输入 | 没有可审查 diff | 输出 no-op 信息，不调用 DeepSeek | `0` | 否 | 集成测试 |
 | 输入 | `--staged` 但没有 staged diff | 输出 staged no-op 信息 | `0` | 否 | 集成测试 |
 | 输入 | `--base main` 找不到 base 分支 | 提示 base 不存在或需要 fetch | `2` | 否 | 单元测试 |
-| 输入 | `--path` 不是绝对路径 | 提示必须传入绝对路径 | `2` | 否 | 单元测试 |
+| 输入 | `--path` 指向相对路径 | 基于当前工作目录解析后审查 | 取决于结果 | 否 | 单元测试 |
 | 输入 | `--path` 指向不存在路径 | 提示路径不存在 | `2` | 否 | 单元测试 |
 | 输入 | `--path` 与 `--staged` 或 `--base` 同时使用 | 提示输入来源冲突 | `2` | 否 | 单元测试 |
 | 输入 | diff 体积超过上限 | 提示缩小范围，或后续支持 `--max-files` / `--max-tokens` | `2` | 否 | 单元测试 |
@@ -849,7 +883,7 @@ ai-codeview review --fail-on high
 
 当前版本完整测试流程：
 
-以下流程只覆盖 0.1 和 0.2 的本地能力，不包含 0.3 的 CI、PR/MR、commit range、baseline 或 suppression。
+以下流程覆盖 0.1、0.2、0.3 和 0.4 的本地能力，不包含后续 PR/MR、commit range、baseline 或 suppression。
 
 1. 基础自动化检查：
 
@@ -883,8 +917,10 @@ pnpm test -- tests/commands/push-command.test.ts tests/review/commit-message.tes
 - AI 审查链路：`prompt-builder`、`review-orchestrator`、`deepseek-provider`。
 - 输出和 gate：`renderers`、`exit-code`。
 - 隐私安全：`detect-secrets`。
-- 0.2 路径审查：`path-input`、`review-command`。
-- 0.2 push 流程：`push-command`、`commit-message`。
+- 0.3 路径审查：`path-input`、`review-command`。
+- 0.3 push 流程：`push-command`、`commit-message`。
+- 0.3 环境诊断：`doctor-command`、`create-program`。
+- 0.4 review 增强：`create-program`、`review-command`、`renderers`、`load-config`、`prompt-builder`、`review-orchestrator`。
 
 3. 不依赖真实 DeepSeek 的 CLI 冒烟：
 
@@ -912,9 +948,12 @@ pnpm dev -- review
 pnpm dev -- review --staged
 pnpm dev -- review --format markdown
 pnpm dev -- review --format json
+pnpm dev -- review --summary
+pnpm dev -- review --changed
 pnpm dev -- review --fail-on high
-pnpm dev -- review --path E:\code\demo\src\index.ts
+pnpm dev -- review --path src\index.ts
 pnpm dev -- review --path E:\code\demo\src
+pnpm dev -- doctor
 ```
 
 通过标准：
@@ -922,8 +961,11 @@ pnpm dev -- review --path E:\code\demo\src
 - `review` 能审查当前 Git diff。
 - `review --staged` 只审查已暂存 diff。
 - `markdown`、`json` 输出格式稳定，JSON 可被解析。
+- `--summary` 输出精简摘要。
+- `--changed` 审查 staged + unstaged 的全部本地变更。
 - `--fail-on high` 在存在 high 或 critical finding 时返回退出码 `1`，否则返回 `0`。
-- `--path` 可以审查绝对路径文件和目录，并在发送给 DeepSeek 前执行过滤和敏感信息扫描。
+- `--path` 可以审查相对路径和绝对路径文件/目录，并在发送给 DeepSeek 前执行过滤和敏感信息扫描。
+- `doctor` 可以输出 Node.js、Git、配置、API Key 和 remote 检查结果；remote 缺失为 warning，硬错误返回退出码 `2`。
 
 5. `push` 命令安全冒烟：
 
@@ -955,6 +997,9 @@ git status --short
 - 审查达到 `failOn` 阈值时，先展示报告并询问是否继续。
 - 用户取消风险确认、提交信息确认或编辑流程时，不执行 commit 和 push。
 - AI 生成中文 commit message，用户确认或编辑后执行 `git commit`。
+- `push --dry-run` 只预演审查和提交信息，不创建 commit、不执行 push；不会发起风险或提交信息确认，命中 gate 时返回退出码 `1`。
+- `push --no-push` 创建 commit 后跳过 `git push`。
+- `push --message` 使用用户指定提交信息，跳过 AI 生成和提交信息确认。
 - commit 成功后执行 `git push`，临时远程仓库能看到新提交。
 - `git commit` 或 `git push` 失败时返回退出码 `2`，并给出清楚错误。
 
@@ -976,7 +1021,7 @@ pnpm dev -- push --non-interactive
 - `push` 在没有 staged diff 且没有未暂存修改时返回清楚提示，不创建提交。
 - `push --non-interactive` 在需要用户确认暂存时返回退出码 `2`，不创建提交。
 
-7. 0.1/0.2 验收映射：
+7. 0.1/0.2/0.3/0.4 验收映射：
 
 | 能力 | 必跑验证 |
 | --- | --- |
@@ -986,8 +1031,12 @@ pnpm dev -- push --non-interactive
 | 配置文件 | `load-config`、`init-command` 测试，真实 `init`、`config` 冒烟 |
 | DeepSeek provider | `deepseek-provider` mock 测试，真实 DeepSeek 小 diff 冒烟 |
 | 严重等级 gate | `exit-code` 测试，真实 `--fail-on high` 冒烟 |
-| `review --path <absolute-path>` | `path-input`、`review-command` 测试，真实文件和目录路径冒烟 |
-| `ai-codeview push` | `push-command`、`commit-message` 测试，`push --non-interactive` 测试，临时 bare remote 冒烟 |
+| `review --path <path>` | `path-input`、`review-command` 测试，真实相对路径、绝对路径、文件和目录冒烟 |
+| `ai-codeview push` | `push-command`、`commit-message` 测试，`push --non-interactive`、`--dry-run`、`--no-push`、`--message` 测试，临时 bare remote 冒烟 |
+| `ai-codeview doctor` | `doctor-command`、`create-program` 测试，真实 CLI help 冒烟 |
+| `review --changed` | `git-client`、`review-command`、`create-program` 测试，真实 `review --changed` 冒烟 |
+| `review --summary` | `renderers`、`review-command`、`create-program` 测试，真实 `review --summary` 冒烟 |
+| `reportLanguage` | `load-config`、`prompt-builder`、`review-orchestrator` 测试 |
 
 ## 17. MVP 里程碑
 
@@ -1019,6 +1068,22 @@ pnpm dev -- push --non-interactive
 
 版本 0.3：
 
+- 推荐使用 `acv` 作为短命令，降低 PowerShell `ac` alias 冲突风险。
+- `review --path <path>` 支持相对路径和绝对路径。
+- `push --dry-run` 支持只预演审查和提交信息，不创建 commit、不执行 push。
+- `push --no-push` 支持只创建 commit，不执行 `git push`。
+- `push --message <message>` 支持使用用户指定提交信息，跳过 AI 生成和确认。
+- `push --non-interactive` 禁用风险确认和提交信息确认；达到 gate 阈值时直接中止。
+- 新增 `doctor` 命令检查本地运行环境、配置和 Git remote；remote 缺失只作为 warning。
+
+版本 0.4：
+
+- `review --changed` 审查 staged + unstaged 的全部本地变更。
+- `review --summary` 输出风险摘要和 finding 列表。
+- `reportLanguage` 配置报告语言，支持 `zh-CN` 和 `en-US`。
+
+版本 0.5：
+
 - Commit range 审查。
 - GitHub PR 审查。
 - GitLab MR 审查。
@@ -1028,7 +1093,7 @@ pnpm dev -- push --non-interactive
 - 更好的 token 预算。
 - 基线抑制。
 
-版本 0.4：
+版本 0.6：
 
 - 建议修复补丁。
 - 交互式修复模式。
@@ -1055,10 +1120,15 @@ pnpm dev -- push --non-interactive
 - MVP 默认 provider 为 `deepseek`。
 - MVP 默认模型为 `deepseek-v4-pro`。
 - API key 通过 `DEEPSEEK_API_KEY` 读取。
-- 0.2 的 `push` 命令优先处理已暂存代码；没有 staged diff 但存在未暂存修改时，必须等待用户确认后才执行 `git add -A`。
-- 0.2 的 `push --non-interactive` 禁用暂存确认；没有 staged diff 但存在未暂存修改时返回退出码 `2`。
-- 0.2 的 commit message 使用中文，提交前必须等待用户确认，并支持用户编辑。
-- 0.2 的审查阻断策略默认只在达到 `failOn` 阈值时询问是否继续。
+- 0.3 的 `push` 命令优先处理已暂存代码；没有 staged diff 但存在未暂存修改时，必须等待用户确认后才执行 `git add -A`。
+- 0.3 的 `push --non-interactive` 禁用暂存确认、风险确认和提交信息确认；没有 staged diff 但存在未暂存修改时返回退出码 `2`，达到 gate 阈值时返回退出码 `1`。
+- 0.3 的 `push --dry-run` 禁用风险确认和提交信息确认；达到 gate 阈值时返回退出码 `1` 并输出报告，不创建 commit、不执行 push。
+- 0.3 的 commit message 默认使用中文，提交前支持用户确认、编辑，也支持通过 `--message` 直接指定。
+- 0.3 的 `doctor` 中 Git remote 缺失是 warning，不影响 `review`，不单独导致失败退出。
+- 0.3 的推荐短命令是 `acv`，`ac` 只作为兼容别名保留。
+- 0.4 的 `review --changed` 使用 `git diff HEAD`，覆盖 staged + unstaged 的全部本地变更。
+- 0.4 的 `review --summary` 只输出风险摘要和 finding 列表，不输出详细 reason、suggestion 和 learning note。
+- 0.4 的 `reportLanguage` 默认 `zh-CN`，支持 `en-US`，并通过 prompt 约束 AI 输出语言。
 
 ## 20. MVP 验收标准
 
@@ -1073,15 +1143,28 @@ MVP 达成的标准：
 - 默认报告输出到终端，`--output review.md` 可以写入 Markdown 报告。
 - 切换 AI provider 不需要改 CLI、Git、diff、report 模块。
 
-0.2 验收标准：
+0.3 验收标准：
 
-- `ai-codeview review --path <absolute-path>` 可以审查指定文件或目录。
-- 非绝对路径、路径不存在、`--path` 与 Git diff 输入模式冲突时返回清楚错误。
+- `ai-codeview review --path <path>` 可以审查相对路径和绝对路径的文件或目录。
+- 路径不存在、`--path` 与 Git diff 输入模式冲突时返回清楚错误。
 - 路径审查默认执行敏感信息扫描，命中疑似密钥时不发送给 DeepSeek。
 - `ai-codeview push` 优先读取 staged diff；没有 staged diff 但存在未暂存修改时，询问是否暂存后继续。
 - `ai-codeview push --non-interactive` 不发起暂存确认，需要用户先手动 `git add`。
+- `ai-codeview push --non-interactive` 不发起风险确认或提交信息确认，命中 gate 时返回退出码 `1`。
+- `ai-codeview push --dry-run` 不创建 commit、不执行 push，不发起风险确认或提交信息确认，命中 gate 时返回退出码 `1` 并输出报告。
+- `ai-codeview push --no-push` 创建 commit 后不执行 push。
+- `ai-codeview push --message <message>` 不调用 AI 生成提交信息。
+- `ai-codeview doctor` 可以输出本地环境诊断结果，remote 缺失显示 warning 而不是 fail。
 - `push` 审查达到 `failOn` 阈值时询问用户是否继续。
 - 用户取消风险确认、提交信息确认或编辑流程时，不执行 commit 和 push。
 - AI 生成中文 commit message，用户可确认或编辑后继续。
 - `git commit` 和 `git push` 失败时返回退出码 `2` 并给出清楚提示。
+
+0.4 验收标准：
+
+- `ai-codeview review --changed` 使用 staged + unstaged 的全部本地变更作为审查输入。
+- `ai-codeview review --changed` 不能与 `--staged`、`--base` 或 `--path` 同时使用。
+- `ai-codeview review --summary` 输出精简摘要，不包含详细 reason、suggestion 和 learning note。
+- `.ai-codeview.json` 支持 `reportLanguage: "zh-CN"` 和 `reportLanguage: "en-US"`。
+- 不支持的 `reportLanguage` 配置返回配置错误。
 

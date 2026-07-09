@@ -6,10 +6,18 @@ import { describe, expect, test } from "vitest";
 import { collectPathReviewFiles } from "../../src/input/path-input.js";
 
 describe("collectPathReviewFiles", () => {
-  test("rejects relative paths", async () => {
-    await expect(collectPathReviewFiles({ paths: ["src/index.ts"], ignore: [] })).rejects.toMatchObject({
-      code: "INVALID_PATH_INPUT",
-      exitCode: 2,
+  test("resolves relative paths from cwd", async () => {
+    const root = await makeTempDir();
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "index.ts"), "export const value = 1;\n", "utf8");
+
+    const result = await collectPathReviewFiles({ paths: ["src/index.ts"], ignore: [], cwd: root });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      path: "src/index.ts",
+      binary: false,
+      content: "export const value = 1;\n",
     });
   });
 

@@ -7,6 +7,7 @@ describe("buildReviewPrompt", () => {
       chunkId: "chunk-1",
       diff: "+const token = input;",
       files: ["src/auth.ts"],
+      reportLanguage: "zh-CN",
     });
 
     expect(prompt).toContain("资深代码审查者");
@@ -18,5 +19,17 @@ describe("buildReviewPrompt", () => {
     expect(prompt).toContain('"risk"');
     expect(prompt).toContain('"findingCounts"');
     expect(prompt).toContain('"findings"');
+  });
+
+  test("asks provider to write user-facing text in configured language", () => {
+    const prompt = buildReviewPrompt({
+      chunkId: "chunk-1",
+      diff: "+const token = input;",
+      files: ["src/auth.ts"],
+      reportLanguage: "en-US",
+    });
+
+    expect(prompt).toContain("en-US");
+    expect(prompt).not.toContain("必须使用中文");
   });
 });

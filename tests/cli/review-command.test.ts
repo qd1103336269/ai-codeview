@@ -224,6 +224,65 @@ describe("runReviewCommand", () => {
     expect(collectGitDiff).toHaveBeenCalledWith({ mode: "base", base: "main" });
   });
 
+  test("passes changed option to diff collector as combined local diff", async () => {
+    const collectGitDiff = collectGitDiffWithChange();
+
+    await runReviewCommand(
+      { changed: true, format: "text" },
+      { collectGitDiff, provider: providerReturningPass() },
+    );
+
+    expect(collectGitDiff).toHaveBeenCalledWith({ mode: "changed" });
+  });
+
+  test("rejects changed option combined with staged or base mode", async () => {
+    const stagedResult = await runReviewCommand(
+      { changed: true, staged: true, format: "text" },
+      { provider: providerReturningPass() },
+    );
+    const baseResult = await runReviewCommand(
+      { changed: true, base: "main", format: "text" },
+      { provider: providerReturningPass() },
+    );
+
+    expect(stagedResult.exitCode).toBe(2);
+    expect(baseResult.exitCode).toBe(2);
+  });
+
+  test("renders compact summary when summary option is true", async () => {
+    const result = await runReviewCommand(
+      { staged: false, summary: true },
+      {
+        collectGitDiff: collectGitDiffWithChange(),
+        provider: providerReturning({
+          risk: "high",
+          status: "fail",
+          summary: "One high risk issue.",
+          findingCounts: { critical: 0, high: 1, medium: 0, low: 0 },
+          findings: [
+            {
+              id: "raw-id",
+              severity: "high",
+              confidence: "high",
+              category: "bug",
+              file: "src/a.ts",
+              line: 1,
+              title: "High issue",
+              reason: "Detailed reason should stay out of summary.",
+              suggestion: "Detailed suggestion should stay out of summary.",
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(result.output).toContain("AI Codeview Summary");
+    expect(result.output).toContain("ACV-0001");
+    expect(result.output).toContain("src/a.ts:1");
+    expect(result.output).not.toContain("Detailed reason should stay out of summary.");
+    expect(result.output).not.toContain("Detailed suggestion should stay out of summary.");
+  });
+
   test("blocks review before provider call when added diff contains a likely secret", async () => {
     const provider = providerReturningPass();
 

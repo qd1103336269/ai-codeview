@@ -25,6 +25,14 @@ describe("collectGitDiff", () => {
     expect(run).toHaveBeenCalledWith("git", ["diff", "--staged"]);
   });
 
+  test("uses HEAD diff when mode is changed", async () => {
+    const run = vi.fn().mockResolvedValue({ stdout: "diff --git a/a.ts b/a.ts" });
+
+    await collectGitDiff({ mode: "changed", run });
+
+    expect(run).toHaveBeenCalledWith("git", ["diff", "HEAD"]);
+  });
+
   test("uses merge-base diff when base branch is provided", async () => {
     const run = vi.fn().mockResolvedValue({ stdout: "diff --git a/a.ts b/a.ts" });
 

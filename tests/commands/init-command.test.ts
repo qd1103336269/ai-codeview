@@ -16,6 +16,7 @@ describe("runInitCommand", () => {
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("配置文件已写入");
     expect(written.provider).toBe("deepseek");
+    expect(written.reportLanguage).toBe("zh-CN");
     expect(written.security.allowSecrets).toBe(false);
     expect(written.output.format).toBe("markdown");
     expect(written.output.file).toBeNull();

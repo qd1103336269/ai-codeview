@@ -1,4 +1,5 @@
 import type { ReviewChunk } from "../diff/chunk-review-input.js";
+import type { ReportLanguage } from "../config/config-schema.js";
 import type { AiProvider } from "../providers/ai-provider.js";
 import type { ReviewFinding, ReviewReport } from "./review-schema.js";
 import { buildReviewPrompt } from "./prompt-builder.js";
@@ -6,6 +7,7 @@ import { buildReviewPrompt } from "./prompt-builder.js";
 export interface ReviewChunksInput {
   chunks: ReviewChunk[];
   provider: AiProvider;
+  reportLanguage?: ReportLanguage;
   onChunkStart?: (chunk: ReviewChunk, index: number, total: number) => void;
   onChunkComplete?: (chunk: ReviewChunk, index: number, total: number) => void;
 }
@@ -22,6 +24,7 @@ export async function reviewChunks(input: ReviewChunksInput): Promise<ReviewRepo
         chunkId: chunk.id,
         diff: chunk.raw,
         files: chunk.files.map((file) => file.path),
+        reportLanguage: input.reportLanguage,
       }),
     });
     findings.push(...report.findings);

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import stripAnsi from "strip-ansi";
 import { renderJsonReport } from "../../src/report/json-report.js";
 import { renderMarkdownReport } from "../../src/report/markdown-report.js";
+import { renderSummaryReport } from "../../src/report/summary-report.js";
 import { renderTextReport } from "../../src/report/text-report.js";
 import type { ReviewReport } from "../../src/review/review-schema.js";
 
@@ -48,5 +49,16 @@ describe("report renderers", () => {
     expect(output).toContain("AI 代码审查报告");
     expect(output).toContain("HIGH");
     expect(output).toContain("src/auth.ts:12");
+  });
+  test("renders compact summary without detailed reason and suggestion", () => {
+    const output = renderSummaryReport(report);
+
+    expect(output).toContain("AI Codeview Summary");
+    expect(output).toContain("risk: high");
+    expect(output).toContain("ACV-0001");
+    expect(output).toContain("src/auth.ts:12");
+    expect(output).toContain(report.findings[0]?.title);
+    expect(output).not.toContain(report.findings[0]?.reason);
+    expect(output).not.toContain(report.findings[0]?.suggestion);
   });
 });

@@ -16,6 +16,7 @@ describe("config loading", () => {
     expect(config.apiKeyEnv).toBe("DEEPSEEK_API_KEY");
     expect(config.thinking).toBe(true);
     expect(config.reasoningEffort).toBe("high");
+    expect(config.reportLanguage).toBe("zh-CN");
     expect(config.review.security).toBe(true);
     expect(config.security.allowSecrets).toBe(false);
     expect(config.output.format).toBe("markdown");
@@ -34,6 +35,15 @@ describe("config loading", () => {
 
   test("rejects unsupported DeepSeek reasoning effort values", () => {
     expect(() => loadConfigFromObject({ reasoningEffort: "medium" })).toThrow("Invalid configuration");
+  });
+
+  test("accepts supported report languages", () => {
+    expect(loadConfigFromObject({ reportLanguage: "en-US" }).reportLanguage).toBe("en-US");
+    expect(loadConfigFromObject({ reportLanguage: "zh-CN" }).reportLanguage).toBe("zh-CN");
+  });
+
+  test("rejects unsupported report language values", () => {
+    expect(() => loadConfigFromObject({ reportLanguage: "fr-FR" })).toThrow("Invalid configuration");
   });
 
   test("CLI flags override object config", () => {

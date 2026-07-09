@@ -1,6 +1,7 @@
 import { Chalk } from "chalk";
 import { Command } from "commander";
 import { runConfigCommand as defaultRunConfigCommand } from "../commands/config-command.js";
+import { runDoctorCommand as defaultRunDoctorCommand } from "../commands/doctor-command.js";
 import { runInitCommand as defaultRunInitCommand } from "../commands/init-command.js";
 import { runPushCommand as defaultRunPushCommand } from "../commands/push-command.js";
 import { runReviewCommand as defaultRunReviewCommand } from "../commands/review-command.js";
@@ -11,12 +12,15 @@ export interface CreateProgramDeps {
   runInitCommand?: typeof defaultRunInitCommand;
   runConfigCommand?: typeof defaultRunConfigCommand;
   runPushCommand?: typeof defaultRunPushCommand;
+  runDoctorCommand?: typeof defaultRunDoctorCommand;
 }
 
 interface ReviewCliOptions {
   staged?: boolean;
   base?: string;
   path?: string[];
+  changed?: boolean;
+  summary?: boolean;
   failOn?: Severity;
   format?: OutputFormat;
   output?: string;
@@ -30,6 +34,9 @@ interface InitCliOptions {
 
 interface PushCliOptions {
   nonInteractive?: boolean;
+  dryRun?: boolean;
+  push?: boolean;
+  message?: string;
 }
 
 const progressChalk = new Chalk({ level: 1 });
@@ -39,6 +46,7 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
   const runInitCommand = deps.runInitCommand ?? defaultRunInitCommand;
   const runConfigCommand = deps.runConfigCommand ?? defaultRunConfigCommand;
   const runPushCommand = deps.runPushCommand ?? defaultRunPushCommand;
+  const runDoctorCommand = deps.runDoctorCommand ?? defaultRunDoctorCommand;
   const program = new Command();
 
   program
@@ -55,14 +63,16 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     })
     .helpOption("-h, --help", "显示命令帮助")
     .helpCommand("help [command]", "显示命令帮助")
-    .version("0.2.0", "-V, --version", "显示版本号");
+    .version("0.4.0", "-V, --version", "显示版本号");
 
   program
     .command("review")
     .description("审查当前 Git 变更")
     .option("--staged", "只审查暂存区变更")
+    .option("--changed", "审查 staged + unstaged 的全部本地变更")
     .option("--base <branch>", "审查当前分支相对 base 分支的变更")
-    .option("--path <path>", "审查指定绝对路径的文件或目录", collectPathOption, [])
+    .option("--path <path>", "审查指定路径的文件或目录，支持相对路径和绝对路径", collectPathOption, [])
+    .option("--summary", "只输出风险摘要和 finding 列表")
     .option("--fail-on <severity>", "当 finding 达到指定严重等级时返回失败退出码")
     .option("--format <format>", "输出格式")
     .option("--output <file>", "把报告写入文件")
@@ -75,6 +85,8 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
           staged: options.staged,
           base: options.base,
           path: options.path?.length ? options.path : undefined,
+          changed: options.changed,
+          summary: options.summary,
           failOn: options.failOn,
           format: options.format,
           output: options.output,
@@ -109,8 +121,16 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     .command("push")
     .description("审查已暂存代码后提交并推送")
     .option("--non-interactive", "禁用交互确认，适合脚本或 CI 环境")
+    .option("--dry-run", "只执行审查和提交信息生成，不创建 commit，不执行 push")
+    .option("--no-push", "创建 commit 后不执行 git push")
+    .option("-m, --message <message>", "使用指定提交信息，跳过 AI 生成和确认")
     .action(async (options: PushCliOptions) => {
-      const pushOptions = options.nonInteractive ? { nonInteractive: true } : {};
+      const pushOptions = {
+        ...(options.nonInteractive ? { nonInteractive: true } : {}),
+        ...(options.dryRun ? { dryRun: true } : {}),
+        ...(options.push === false ? { noPush: true } : {}),
+        ...(options.message !== undefined ? { message: options.message } : {}),
+      };
       const result = await runPushCommand(
         pushOptions,
         {
@@ -123,6 +143,12 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
       process.stdout.write(`${result.output}\n`);
       process.exitCode = result.exitCode;
     });
+
+  program.command("doctor").description("检查本地运行环境和配置").action(async () => {
+    const result = await runDoctorCommand();
+    process.stdout.write(`${result.output}\n`);
+    process.exitCode = result.exitCode;
+  });
 
   return program;
 }

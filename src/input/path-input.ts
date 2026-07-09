@@ -1,5 +1,5 @@
 import { readdir, readFile, stat } from "node:fs/promises";
-import { isAbsolute, relative, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import ignore from "ignore";
 import type { ReviewFileDiff } from "../diff/parse-git-diff.js";
 import { AppError } from "../errors/app-error.js";
@@ -20,17 +20,8 @@ export async function collectPathReviewFiles(input: CollectPathReviewFilesInput)
   const files: PathReviewFile[] = [];
 
   for (const path of input.paths) {
-    if (!isAbsolute(path)) {
-      throw new AppError({
-        code: "INVALID_PATH_INPUT",
-        message: `路径审查只接受绝对路径：${path}`,
-        exitCode: 2,
-        recoverable: false,
-        suggestion: "请传入完整绝对路径，例如 E:\\code\\demo\\src\\index.ts。",
-      });
-    }
-
-    const pathStat = await safeStat(path);
+    const absolutePath = isAbsolute(path) ? path : resolve(cwd, path);
+    const pathStat = await safeStat(absolutePath);
     if (!pathStat) {
       throw new AppError({
         code: "PATH_NOT_FOUND",
@@ -40,7 +31,7 @@ export async function collectPathReviewFiles(input: CollectPathReviewFilesInput)
       });
     }
 
-    const absoluteFiles = pathStat.isDirectory() ? await listFiles(path) : [path];
+    const absoluteFiles = pathStat.isDirectory() ? await listFiles(absolutePath) : [absolutePath];
     for (const absoluteFile of absoluteFiles) {
       const reviewPath = toReviewPath(cwd, absoluteFile);
       if (matcher.ignores(reviewPath)) {

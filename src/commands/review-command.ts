@@ -14,6 +14,7 @@ import { DeepSeekProvider } from "../providers/deepseek-provider.js";
 import { resolveExitCode } from "../report/exit-code.js";
 import { renderJsonReport } from "../report/json-report.js";
 import { renderMarkdownReport } from "../report/markdown-report.js";
+import { renderSummaryReport } from "../report/summary-report.js";
 import { renderTextReport } from "../report/text-report.js";
 import { reviewChunks } from "../review/review-orchestrator.js";
 import type { ReviewReport } from "../review/review-schema.js";
@@ -22,7 +23,9 @@ import { detectSecretsInDiffFiles, detectSecretsInTextFiles } from "../security/
 export interface ReviewCommandOptions {
   staged?: boolean;
   base?: string;
+  changed?: boolean;
   path?: string[];
+  summary?: boolean;
   format?: OutputFormat;
   failOn?: Severity;
   output?: string;
@@ -59,6 +62,14 @@ export async function runReviewCommand(
       throw new AppError({
         code: "INVALID_PATH_INPUT",
         message: "不能同时使用 --path 与 --staged 或 --base。",
+        exitCode: 2,
+        recoverable: false,
+      });
+    }
+    if (options.changed && (options.staged || options.base || options.path?.length)) {
+      throw new AppError({
+        code: "INVALID_CONFIG",
+        message: "不能同时使用 --changed 与 --staged、--base 或 --path。",
         exitCode: 2,
         recoverable: false,
       });
@@ -107,6 +118,7 @@ export async function runReviewCommand(
         ? await reviewChunks({
             chunks,
             provider,
+            reportLanguage: config.reportLanguage,
             onChunkStart: (_chunk, index, total) => {
               progress(`调用 DeepSeek 审查分块 ${index}/${total}...`);
             },
@@ -117,7 +129,7 @@ export async function runReviewCommand(
         : emptyReport();
     progress("生成审查报告...");
     const exitCode = resolveExitCode(report, config.failOn, config.confidenceFloor);
-    const rendered = renderReport(report, config.output.format, options.color ?? false);
+    const rendered = renderReport(report, config.output.format, options.color ?? false, options.summary ?? false);
 
     if (config.output.file) {
       const outputPath = resolve(cwd, config.output.file);
@@ -211,7 +223,8 @@ function createDeepSeekProvider(config: AiCodeviewConfig, env: NodeJS.ProcessEnv
   });
 }
 
-function renderReport(report: ReviewReport, format: OutputFormat, color: boolean): string {
+function renderReport(report: ReviewReport, format: OutputFormat, color: boolean, summary: boolean): string {
+  if (summary) return renderSummaryReport(report);
   if (format === "json") return renderJsonReport(report);
   if (format === "markdown") return renderMarkdownReport(report);
   return renderTextReport(report, { color });
@@ -239,6 +252,9 @@ function renderError(error: AppError, format: OutputFormat): string {
 function getGitDiffInput(options: ReviewCommandOptions) {
   if (options.base) {
     return { mode: "base" as const, base: options.base };
+  }
+  if (options.changed) {
+    return { mode: "changed" as const };
   }
   return { mode: options.staged ? ("staged" as const) : ("working-tree" as const) };
 }

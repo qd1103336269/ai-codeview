@@ -23,6 +23,9 @@ import type { CommandResult } from "./review-command.js";
 
 export interface PushCommandOptions {
   nonInteractive?: boolean;
+  dryRun?: boolean;
+  noPush?: boolean;
+  message?: string;
 }
 
 export interface CommitMessageDecision {
@@ -76,24 +79,25 @@ export async function runPushCommand(
 
     if (gateExitCode === 1) {
       progress("审查发现达到阈值的问题，等待用户确认...");
+      if (options.dryRun) {
+        return {
+          exitCode: 1,
+          output: ["dry-run 审查结果达到阈值，未创建 commit，未执行 push。", "", reportMarkdown].join("\n"),
+        };
+      }
+      if (options.nonInteractive) {
+        return {
+          exitCode: 1,
+          output: ["审查结果达到阈值，非交互式模式已中止提交和推送。", "", reportMarkdown].join("\n"),
+        };
+      }
       const shouldContinue = await (deps.confirmRisk ?? defaultConfirmRisk)(reportMarkdown);
       if (!shouldContinue) {
         return { exitCode: 1, output: "已取消提交和推送。" };
       }
     }
 
-    progress("生成中文提交信息...");
-    const generatedMessage = sanitizeCommitMessage(
-      await provider.generateCommitMessage({
-        prompt: buildCommitMessagePrompt({ diff: rawDiff }),
-      }),
-    );
-    const decision = await confirmCommitMessageSafely(deps, generatedMessage);
-    if (decision.action === "cancel") {
-      return { exitCode: 1, output: "已取消提交和推送。" };
-    }
-
-    const message = (decision.action === "edit" ? decision.message : generatedMessage)?.trim();
+    const message = await resolveCommitMessage(options, deps, provider, rawDiff, progress);
     if (!message) {
       throw new AppError({
         code: "INVALID_CONFIG",
@@ -103,8 +107,20 @@ export async function runPushCommand(
       });
     }
 
+    if (options.dryRun) {
+      return {
+        exitCode: 0,
+        output: [`dry-run 完成，未创建 commit，未执行 push。`, "", `提交信息：${message}`].join("\n"),
+      };
+    }
+
     progress("创建 Git commit...");
     await (deps.commitStagedChanges ?? defaultCommitStagedChanges)({ message });
+    if (options.noPush) {
+      progress("已跳过 git push。");
+      return { exitCode: 0, output: "提交完成，未推送。" };
+    }
+
     progress("推送到远程分支...");
     await (deps.pushCurrentBranch ?? defaultPushCurrentBranch)();
     progress("push 流程完成。");
@@ -114,6 +130,40 @@ export async function runPushCommand(
     const appError = toAppError(error);
     return { exitCode: appError.exitCode, output: appError.message };
   }
+}
+
+async function resolveCommitMessage(
+  options: PushCommandOptions,
+  deps: PushCommandDeps,
+  provider: AiProvider,
+  rawDiff: string,
+  progress: (message: string) => void,
+): Promise<string> {
+  if (options.message !== undefined) {
+    return sanitizeCommitMessage(options.message).trim();
+  }
+
+  progress("生成中文提交信息...");
+  const generatedMessage = sanitizeCommitMessage(
+    await provider.generateCommitMessage({
+      prompt: buildCommitMessagePrompt({ diff: rawDiff }),
+    }),
+  );
+  if (options.nonInteractive || options.dryRun) {
+    return generatedMessage.trim();
+  }
+
+  const decision = await confirmCommitMessageSafely(deps, generatedMessage);
+  if (decision.action === "cancel") {
+    throw new AppError({
+      code: "INTERACTION_FAILED",
+      message: "已取消提交和推送。",
+      exitCode: 1,
+      recoverable: false,
+    });
+  }
+
+  return (decision.action === "edit" ? decision.message : generatedMessage)?.trim() ?? "";
 }
 
 function assertNoSecrets(files: ReturnType<typeof parseGitDiff>): void {
