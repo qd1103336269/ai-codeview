@@ -14,6 +14,16 @@ ai-codeview review --staged
 ac review --staged
 ```
 
+## 官网
+
+AI Codeview 官网规划中。后续会提供一个在线网页，用于介绍产品定位、核心能力、安装方式、使用示例、版本路线图和发布说明。
+
+官网上线后，可以在这里补充访问地址：
+
+```text
+https://your-domain.example
+```
+
 ## 前置条件
 
 使用前请确认：
