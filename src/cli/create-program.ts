@@ -28,6 +28,10 @@ interface InitCliOptions {
   force?: boolean;
 }
 
+interface PushCliOptions {
+  nonInteractive?: boolean;
+}
+
 const progressChalk = new Chalk({ level: 1 });
 
 export function createProgram(deps: CreateProgramDeps = {}): Command {
@@ -101,18 +105,24 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     process.stdout.write(`${await runConfigCommand()}\n`);
   });
 
-  program.command("push").description("审查已暂存代码后提交并推送").action(async () => {
-    const result = await runPushCommand(
-      {},
-      {
-        onProgress: (message) => {
-          process.stderr.write(`${formatProgressMessage(message)}\n`);
+  program
+    .command("push")
+    .description("审查已暂存代码后提交并推送")
+    .option("--non-interactive", "禁用交互确认，适合脚本或 CI 环境")
+    .action(async (options: PushCliOptions) => {
+      const pushOptions = options.nonInteractive ? { nonInteractive: true } : {};
+      const result = await runPushCommand(
+        pushOptions,
+        {
+          isInteractive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+          onProgress: (message) => {
+            process.stderr.write(`${formatProgressMessage(message)}\n`);
+          },
         },
-      },
-    );
-    process.stdout.write(`${result.output}\n`);
-    process.exitCode = result.exitCode;
-  });
+      );
+      process.stdout.write(`${result.output}\n`);
+      process.exitCode = result.exitCode;
+    });
 
   return program;
 }

@@ -14,8 +14,11 @@ export type AppErrorCode =
   | "DIFF_TOO_LARGE"
   | "AI_RESPONSE_INVALID"
   | "OUTPUT_WRITE_FAILED"
+  | "GIT_ADD_FAILED"
   | "GIT_COMMIT_FAILED"
   | "GIT_PUSH_FAILED"
+  | "GIT_STATUS_FAILED"
+  | "INTERACTION_FAILED"
   | "UNKNOWN_ERROR";
 
 export type AppExitCode = 0 | 1 | 2;

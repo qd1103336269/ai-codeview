@@ -120,6 +120,22 @@ describe("createProgram", () => {
     stderrWrite.mockRestore();
   });
 
+  test("passes push --non-interactive to push command handler", async () => {
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const runPushCommand = vi.fn().mockResolvedValue({ exitCode: 2, output: "no staged diff" });
+    const program = createProgram({ runPushCommand });
+
+    await program.parseAsync(["push", "--non-interactive"], { from: "user" });
+
+    expect(runPushCommand).toHaveBeenCalledWith(
+      { nonInteractive: true },
+      expect.objectContaining({ onProgress: expect.any(Function), isInteractive: expect.any(Boolean) }),
+    );
+    stdoutWrite.mockRestore();
+    stderrWrite.mockRestore();
+  });
+
   test("passes init --force to init command handler", async () => {
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     const runInitCommand = vi.fn().mockResolvedValue({ exitCode: 0, output: "created" });

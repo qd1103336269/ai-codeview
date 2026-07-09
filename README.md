@@ -25,7 +25,8 @@ ac review --staged
 - 运行 Git diff 审查时，需要在 Git 仓库目录内执行命令。
 - 使用 `push` 命令时，需要已经配置 Git 用户名、邮箱、远程仓库和 push 权限。
 
-`push` 命令只处理已暂存代码。运行前需要先执行：
+`push` 命令优先处理已暂存代码。没有暂存变更但存在工作区修改时，它会询问是否执行 `git add -A` 后继续。
+在脚本或 CI 等非交互式环境中，请使用 `ac push --non-interactive`，并在运行前手动暂存要提交的文件。
 
 ```bash
 git add <file>
@@ -98,6 +99,13 @@ git add src/index.ts
 ac push
 ```
 
+脚本或 CI 中禁用交互确认：
+
+```bash
+git add src/index.ts
+ac push --non-interactive
+```
+
 ## 常用命令
 
 ```bash
@@ -109,6 +117,7 @@ ac review --format markdown --output review.md
 ac review --format json
 ac review --fail-on high
 ac push
+ac push --non-interactive
 ac init
 ac config
 ac help
@@ -119,6 +128,7 @@ ac help
 ```bash
 ai-codeview review
 ai-codeview push
+ai-codeview push --non-interactive
 ai-codeview help
 ```
 
@@ -214,28 +224,38 @@ ac review --fail-on high
 
 ## 提交并推送
 
-`push` 会审查已暂存代码，生成中文提交信息，并在用户确认后执行 `git commit` 和 `git push`。
+`push` 会审查准备提交的代码，生成中文提交信息，并在用户确认后执行 `git commit` 和 `git push`。
 
 ```bash
 git add src/index.ts
 ac push
 ```
 
+非交互式环境使用：
+
+```bash
+git add src/index.ts
+ac push --non-interactive
+```
+
 流程：
 
 1. 读取 staged diff。
-2. 扫描疑似密钥。
-3. 调用 DeepSeek 审查代码。
-4. 如达到 `failOn` 阈值，询问是否继续。
-5. 生成中文 commit message。
-6. 用户确认、编辑或取消。
-7. 执行 `git commit`。
-8. 执行 `git push`。
+2. 如果没有 staged diff 但有未暂存修改，询问是否执行 `git add -A`。
+3. 扫描疑似密钥。
+4. 调用 DeepSeek 审查代码。
+5. 如达到 `failOn` 阈值，询问是否继续。
+6. 生成中文 commit message。
+7. 用户确认、编辑或取消。
+8. 执行 `git commit`。
+9. 执行 `git push`。
 
 注意：
 
-- `push` 不会自动执行 `git add`。
-- 没有 staged diff 时，不会提交也不会推送。
+- `push` 不会静默执行 `git add`；只有用户确认后才会执行 `git add -A`。
+- `push --non-interactive` 不会发起任何暂存确认；没有 staged diff 但存在未暂存修改时，会返回退出码 `2`，请先手动执行 `git add`。
+- 没有 staged diff 且没有未暂存修改时，不会提交也不会推送。
+- 用户拒绝暂存未暂存修改时，不会提交也不会推送。
 - 用户取消确认时，不会提交也不会推送。
 - `git commit` 或 `git push` 失败时，命令返回退出码 `2`。
 
@@ -337,19 +357,28 @@ ac push --help
 
 ## 常见问题
 
-### 为什么 `ac push` 提示没有暂存变更？
+### 为什么 `ac push` 会询问是否执行 `git add -A`？
 
-`push` 只处理 staged diff。请先运行：
+当没有 staged diff，但工作区存在未暂存修改时，`push` 会询问是否把这些修改加入暂存区。确认后会执行：
+
+```bash
+git add -A
+```
+
+然后继续审查、生成提交信息、提交和推送。
+
+如果你只想提交部分文件，请先手动执行 `git add <file>`，再运行 `ac push`。
+
+### 脚本或 CI 中如何使用 `ac push`？
+
+请先手动暂存要提交的文件，然后使用非交互式模式：
 
 ```bash
 git add <file>
+ac push --non-interactive
 ```
 
-然后再执行：
-
-```bash
-ac push
-```
+非交互式模式不会询问是否执行 `git add -A`。如果没有 staged diff，即使工作区存在未暂存修改，命令也会直接返回退出码 `2`，避免脚本挂起。
 
 ### 为什么提示缺少 `DEEPSEEK_API_KEY`？
 

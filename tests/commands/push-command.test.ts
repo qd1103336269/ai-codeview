@@ -19,13 +19,215 @@ describe("runPushCommand", () => {
             recoverable: false,
           }),
         ),
+        hasUnstagedChanges: vi.fn().mockResolvedValue(false),
         commitStagedChanges,
         pushCurrentBranch,
       },
     );
 
     expect(result.exitCode).toBe(2);
-    expect(result.output).toContain("请先执行 git add");
+    expect(result.output).toContain("没有可提交变更");
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
+  test("stages unstaged changes after confirmation and continues push flow", async () => {
+    const collectGitDiff = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new AppError({
+          code: "NO_DIFF",
+          message: "没有发现可审查的 diff。",
+          exitCode: 0,
+          recoverable: false,
+        }),
+      )
+      .mockResolvedValueOnce(stagedDiff());
+    const stageAllChanges = vi.fn().mockResolvedValue(undefined);
+    const commitStagedChanges = vi.fn().mockResolvedValue(undefined);
+    const pushCurrentBranch = vi.fn().mockResolvedValue(undefined);
+    const provider = providerReturning(passReport(), "feat: 自动暂存后推送");
+
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff,
+        hasUnstagedChanges: vi.fn().mockResolvedValue(true),
+        confirmStageChanges: vi.fn().mockResolvedValue(true),
+        stageAllChanges,
+        provider,
+        confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(stageAllChanges).toHaveBeenCalledTimes(1);
+    expect(collectGitDiff).toHaveBeenCalledTimes(2);
+    expect(provider.review).toHaveBeenCalledTimes(1);
+    expect(commitStagedChanges).toHaveBeenCalledWith({ message: "feat: 自动暂存后推送" });
+    expect(pushCurrentBranch).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not commit or push when staging unstaged changes is rejected", async () => {
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockRejectedValue(
+          new AppError({
+            code: "NO_DIFF",
+            message: "没有发现可审查的 diff。",
+            exitCode: 0,
+            recoverable: false,
+          }),
+        ),
+        hasUnstagedChanges: vi.fn().mockResolvedValue(true),
+        confirmStageChanges: vi.fn().mockResolvedValue(false),
+        stageAllChanges: vi.fn(),
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain("已取消");
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
+  test("does not prompt or stage unstaged changes in non-interactive mode", async () => {
+    const confirmStageChanges = vi.fn();
+    const stageAllChanges = vi.fn();
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+
+    const result = await runPushCommand(
+      { nonInteractive: true },
+      {
+        collectGitDiff: vi.fn().mockRejectedValue(
+          new AppError({
+            code: "NO_DIFF",
+            message: "没有发现可审查的 diff。",
+            exitCode: 0,
+            recoverable: false,
+          }),
+        ),
+        hasUnstagedChanges: vi.fn().mockResolvedValue(true),
+        confirmStageChanges,
+        stageAllChanges,
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("当前环境不可交互");
+    expect(confirmStageChanges).not.toHaveBeenCalled();
+    expect(stageAllChanges).not.toHaveBeenCalled();
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
+  test("does not prompt or stage unstaged changes when the terminal is not interactive", async () => {
+    const confirmStageChanges = vi.fn();
+    const stageAllChanges = vi.fn();
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+
+    const result = await runPushCommand(
+      {},
+      {
+        isInteractive: false,
+        collectGitDiff: vi.fn().mockRejectedValue(
+          new AppError({
+            code: "NO_DIFF",
+            message: "没有发现可审查的 diff。",
+            exitCode: 0,
+            recoverable: false,
+          }),
+        ),
+        hasUnstagedChanges: vi.fn().mockResolvedValue(true),
+        confirmStageChanges,
+        stageAllChanges,
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("当前环境不可交互");
+    expect(confirmStageChanges).not.toHaveBeenCalled();
+    expect(stageAllChanges).not.toHaveBeenCalled();
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
+  test("returns an error when stage confirmation fails with a non-cancellation error", async () => {
+    const stageAllChanges = vi.fn();
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockRejectedValue(
+          new AppError({
+            code: "NO_DIFF",
+            message: "没有发现可审查的 diff。",
+            exitCode: 0,
+            recoverable: false,
+          }),
+        ),
+        hasUnstagedChanges: vi.fn().mockResolvedValue(true),
+        confirmStageChanges: vi.fn().mockRejectedValue(new Error("stdin unavailable")),
+        stageAllChanges,
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(stageAllChanges).not.toHaveBeenCalled();
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
+  test("returns git status error when checking unstaged changes fails", async () => {
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockRejectedValue(
+          new AppError({
+            code: "NO_DIFF",
+            message: "没有发现可审查的 diff。",
+            exitCode: 0,
+            recoverable: false,
+          }),
+        ),
+        hasUnstagedChanges: vi.fn().mockRejectedValue(
+          new AppError({
+            code: "GIT_STATUS_FAILED",
+            message: "Git status 执行失败。",
+            exitCode: 2,
+            recoverable: false,
+          }),
+        ),
+        confirmStageChanges: vi.fn(),
+        stageAllChanges: vi.fn(),
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("Git status 执行失败");
     expect(commitStagedChanges).not.toHaveBeenCalled();
     expect(pushCurrentBranch).not.toHaveBeenCalled();
   });

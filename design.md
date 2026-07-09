@@ -130,7 +130,13 @@ ai-codeview review --path E:\code\demo\src
 ai-codeview push
 ```
 
-只审查已暂存代码，不自动 `git add`。如果审查结果达到 `failOn` 阈值，则展示报告并询问用户是否继续。继续后由 AI 生成中文 commit message，用户确认或编辑后才执行 `git commit` 和 `git push`。
+优先审查已暂存代码。若没有 staged diff 但工作区存在未暂存修改，则询问用户是否执行 `git add -A` 后继续。审查结果达到 `failOn` 阈值时展示报告并询问用户是否继续。继续后由 AI 生成中文 commit message，用户确认或编辑后才执行 `git commit` 和 `git push`。
+
+```bash
+ai-codeview push --non-interactive
+```
+
+用于脚本或 CI 环境。禁用暂存确认；如果没有 staged diff 但存在未暂存修改，直接返回退出码 `2`，提示用户先手动执行 `git add`，不自动暂存、不提交、不推送。
 
 ```bash
 ai-codeview init
@@ -720,7 +726,11 @@ AI 必须输出置信度：
 | 输出 | JSON 输出包含 ANSI 颜色 | 不允许，测试中用 `strip-ansi` 校验 | `2` 或测试失败 | 否 | 黄金样例测试 |
 | CI | CI 环境中 spinner 导致日志混乱 | 自动关闭动态 spinner，输出稳定文本 | 取决于结果 | 否 | 单元测试 |
 | 隐私 | diff 中疑似包含 secret | 警告用户，并可后续支持阻断云端请求 | `0`、`1` 或 `2` | 否 | 单元测试 |
-| Push | 没有已暂存变更 | 提示先执行 `git add` | `2` | 否 | 单元测试 |
+| Push | 没有已暂存变更但存在未暂存修改 | 询问是否执行 `git add -A` 后继续 | `0` 或 `1` | 否 | 单元测试 |
+| Push | 非交互式环境没有 staged diff 但存在未暂存修改 | 不询问、不暂存，提示先手动 `git add` | `2` | 否 | 单元测试 |
+| Push | 检查工作区状态失败 | 区分 Git 不存在和 `git status` 执行失败，给出清楚错误 | `2` | 否 | 单元测试 |
+| Push | 暂存确认输入失败 | 中止流程，不 commit、不 push | `2` | 否 | 单元测试 |
+| Push | 没有任何可提交变更 | 提示没有可提交变更 | `2` | 否 | 单元测试 |
 | Push | 审查达到 `failOn` 阈值且用户取消 | 不 commit、不 push | `1` | 否 | 单元测试 |
 | Push | 用户取消提交信息确认 | 不 commit、不 push | `1` | 否 | 单元测试 |
 | Push | `git commit` 失败 | 提示 Git commit 失败摘要 | `2` | 否 | 单元测试 |
@@ -742,7 +752,12 @@ type AppErrorCode =
   | "PROVIDER_UNAVAILABLE"
   | "DIFF_TOO_LARGE"
   | "AI_RESPONSE_INVALID"
-  | "OUTPUT_WRITE_FAILED";
+  | "OUTPUT_WRITE_FAILED"
+  | "GIT_STATUS_FAILED"
+  | "GIT_ADD_FAILED"
+  | "GIT_COMMIT_FAILED"
+  | "GIT_PUSH_FAILED"
+  | "INTERACTION_FAILED";
 
 interface AppError {
   code: AppErrorCode;
@@ -933,8 +948,10 @@ git status --short
 
 通过标准：
 
-- 没有暂存变更时，`push` 返回退出码 `2`，不 commit、不 push。
-- 有暂存变更时，`push` 只审查 staged diff，不自动 `git add` 未暂存文件。
+- 没有 staged diff 但有未暂存修改时，`push` 询问是否执行 `git add -A`。
+- `push --non-interactive` 在没有 staged diff 但有未暂存修改时不询问、不暂存，返回退出码 `2`。
+- 用户拒绝暂存未暂存修改时，`push` 返回退出码 `1`，不 commit、不 push。
+- 没有任何可提交变更时，`push` 返回退出码 `2`，不 commit、不 push。
 - 审查达到 `failOn` 阈值时，先展示报告并询问是否继续。
 - 用户取消风险确认、提交信息确认或编辑流程时，不执行 commit 和 push。
 - AI 生成中文 commit message，用户确认或编辑后执行 `git commit`。
@@ -949,13 +966,15 @@ pnpm dev -- review --path E:\not-exist\missing.ts
 pnpm dev -- review --path E:\code\demo\src\index.ts --staged
 pnpm dev -- review --path E:\code\demo\src\index.ts --base main
 pnpm dev -- push
+pnpm dev -- push --non-interactive
 ```
 
 通过标准：
 
 - 相对路径、缺失路径、`--path` 与 Git diff 输入模式冲突时返回退出码 `2`。
 - 命中疑似密钥时，默认阻断发送到 DeepSeek；只有显式 `--allow-secrets` 或配置放行后才继续。
-- `push` 在没有 staged diff 时返回清楚提示，不创建提交。
+- `push` 在没有 staged diff 且没有未暂存修改时返回清楚提示，不创建提交。
+- `push --non-interactive` 在需要用户确认暂存时返回退出码 `2`，不创建提交。
 
 7. 0.1/0.2 验收映射：
 
@@ -968,7 +987,7 @@ pnpm dev -- push
 | DeepSeek provider | `deepseek-provider` mock 测试，真实 DeepSeek 小 diff 冒烟 |
 | 严重等级 gate | `exit-code` 测试，真实 `--fail-on high` 冒烟 |
 | `review --path <absolute-path>` | `path-input`、`review-command` 测试，真实文件和目录路径冒烟 |
-| `ai-codeview push` | `push-command`、`commit-message` 测试，临时 bare remote 冒烟 |
+| `ai-codeview push` | `push-command`、`commit-message` 测试，`push --non-interactive` 测试，临时 bare remote 冒烟 |
 
 ## 17. MVP 里程碑
 
@@ -992,7 +1011,8 @@ pnpm dev -- push
 版本 0.2：
 
 - 通过 `review --path <absolute-path>` 审查指定绝对路径的文件或目录。
-- 新增 `push` 命令，只处理已暂存代码。
+- 新增 `push` 命令，优先处理已暂存代码；没有 staged diff 但存在未暂存修改时，可由用户确认后执行 `git add -A`。
+- 新增 `push --non-interactive`，用于脚本或 CI；需要暂存确认时直接失败，不挂起。
 - Push 前先审查 staged diff，达到 `failOn` 阈值时询问是否继续。
 - 使用 DeepSeek 生成中文 commit message，用户确认或编辑后再提交。
 - 提交成功后执行 `git push`。
@@ -1035,7 +1055,8 @@ pnpm dev -- push
 - MVP 默认 provider 为 `deepseek`。
 - MVP 默认模型为 `deepseek-v4-pro`。
 - API key 通过 `DEEPSEEK_API_KEY` 读取。
-- 0.2 的 `push` 命令只处理已暂存代码，不自动 `git add`。
+- 0.2 的 `push` 命令优先处理已暂存代码；没有 staged diff 但存在未暂存修改时，必须等待用户确认后才执行 `git add -A`。
+- 0.2 的 `push --non-interactive` 禁用暂存确认；没有 staged diff 但存在未暂存修改时返回退出码 `2`。
 - 0.2 的 commit message 使用中文，提交前必须等待用户确认，并支持用户编辑。
 - 0.2 的审查阻断策略默认只在达到 `failOn` 阈值时询问是否继续。
 
@@ -1057,7 +1078,8 @@ MVP 达成的标准：
 - `ai-codeview review --path <absolute-path>` 可以审查指定文件或目录。
 - 非绝对路径、路径不存在、`--path` 与 Git diff 输入模式冲突时返回清楚错误。
 - 路径审查默认执行敏感信息扫描，命中疑似密钥时不发送给 DeepSeek。
-- `ai-codeview push` 只读取 staged diff，没有暂存变更时不提交、不推送。
+- `ai-codeview push` 优先读取 staged diff；没有 staged diff 但存在未暂存修改时，询问是否暂存后继续。
+- `ai-codeview push --non-interactive` 不发起暂存确认，需要用户先手动 `git add`。
 - `push` 审查达到 `failOn` 阈值时询问用户是否继续。
 - 用户取消风险确认、提交信息确认或编辑流程时，不执行 commit 和 push。
 - AI 生成中文 commit message，用户可确认或编辑后继续。

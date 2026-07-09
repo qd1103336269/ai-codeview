@@ -16,6 +16,14 @@ export interface CommitStagedChangesInput {
   run?: RunCommand;
 }
 
+export interface HasUnstagedChangesInput {
+  run?: RunCommand;
+}
+
+export interface StageAllChangesInput {
+  run?: RunCommand;
+}
+
 export interface PushCurrentBranchInput {
   run?: RunCommand;
 }
@@ -72,6 +80,52 @@ export async function commitStagedChanges(input: CommitStagedChangesInput): Prom
   }
 }
 
+export async function hasUnstagedChanges(input: HasUnstagedChangesInput = {}): Promise<boolean> {
+  const run = input.run ?? defaultRun;
+
+  try {
+    const result = await run("git", ["status", "--porcelain"]);
+    return result.stdout.trim().length > 0;
+  } catch (error) {
+    if (isCommandNotFound(error)) {
+      throw new AppError({
+        code: "GIT_NOT_FOUND",
+        message: "无法执行 Git 命令。",
+        exitCode: 2,
+        recoverable: false,
+        suggestion: "请安装 Git，并确认它已经加入 PATH。",
+        details: error,
+      });
+    }
+
+    throw new AppError({
+      code: "GIT_STATUS_FAILED",
+      message: "Git status 执行失败。",
+      exitCode: 2,
+      recoverable: false,
+      suggestion: "请确认当前目录是 Git 仓库，并检查工作区文件权限后重试。",
+      details: error,
+    });
+  }
+}
+
+export async function stageAllChanges(input: StageAllChangesInput = {}): Promise<void> {
+  const run = input.run ?? defaultRun;
+
+  try {
+    await run("git", ["add", "-A"]);
+  } catch (error) {
+    throw new AppError({
+      code: "GIT_ADD_FAILED",
+      message: "Git add 执行失败。",
+      exitCode: 2,
+      recoverable: false,
+      suggestion: "请检查工作区文件状态、权限和 .gitignore 配置后重试。",
+      details: error,
+    });
+  }
+}
+
 export async function pushCurrentBranch(input: PushCurrentBranchInput = {}): Promise<void> {
   const run = input.run ?? defaultRun;
 
@@ -87,6 +141,16 @@ export async function pushCurrentBranch(input: PushCurrentBranchInput = {}): Pro
       details: error,
     });
   }
+}
+
+function isCommandNotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  const causeCode = (error as { cause?: { code?: unknown } }).cause?.code;
+  return code === "ENOENT" || causeCode === "ENOENT";
 }
 
 function getDiffArgs(input: CollectGitDiffInput): string[] {

@@ -7,7 +7,9 @@ import { AppError, toAppError } from "../errors/app-error.js";
 import {
   collectGitDiff as defaultCollectGitDiff,
   commitStagedChanges as defaultCommitStagedChanges,
+  hasUnstagedChanges as defaultHasUnstagedChanges,
   pushCurrentBranch as defaultPushCurrentBranch,
+  stageAllChanges as defaultStageAllChanges,
 } from "../git/git-client.js";
 import type { AiProvider } from "../providers/ai-provider.js";
 import { DeepSeekProvider } from "../providers/deepseek-provider.js";
@@ -19,7 +21,9 @@ import type { ReviewReport } from "../review/review-schema.js";
 import { detectSecretsInDiffFiles } from "../security/detect-secrets.js";
 import type { CommandResult } from "./review-command.js";
 
-export type PushCommandOptions = Record<string, never>;
+export interface PushCommandOptions {
+  nonInteractive?: boolean;
+}
 
 export interface CommitMessageDecision {
   action: "confirm" | "edit" | "cancel";
@@ -29,17 +33,21 @@ export interface CommitMessageDecision {
 export interface PushCommandDeps {
   collectGitDiff?: typeof defaultCollectGitDiff;
   commitStagedChanges?: typeof defaultCommitStagedChanges;
+  hasUnstagedChanges?: typeof defaultHasUnstagedChanges;
   pushCurrentBranch?: typeof defaultPushCurrentBranch;
+  stageAllChanges?: typeof defaultStageAllChanges;
   provider?: AiProvider;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
+  isInteractive?: boolean;
   onProgress?: (message: string) => void;
+  confirmStageChanges?: () => Promise<boolean>;
   confirmRisk?: (reportMarkdown: string) => Promise<boolean>;
   confirmCommitMessage?: (message: string) => Promise<CommitMessageDecision>;
 }
 
 export async function runPushCommand(
-  _options: PushCommandOptions,
+  options: PushCommandOptions,
   deps: PushCommandDeps = {},
 ): Promise<CommandResult> {
   const progress = deps.onProgress ?? noopProgress;
@@ -47,7 +55,11 @@ export async function runPushCommand(
   try {
     progress("检查 Git 状态...");
     progress("收集已暂存变更...");
-    const rawDiff = await collectStagedDiff(deps);
+    const stagedDiffResult = await collectStagedDiff(options, deps, progress);
+    if (stagedDiffResult.cancelled) {
+      return { exitCode: 1, output: "已取消提交和推送。" };
+    }
+    const rawDiff = stagedDiffResult.diff;
     const config = await loadConfig({ cwd: deps.cwd ?? process.cwd(), overrides: { format: "markdown" } });
     const provider = deps.provider ?? createDeepSeekProvider(config, deps.env ?? process.env);
 
@@ -154,21 +166,88 @@ function isPromptCancellation(error: unknown): boolean {
   );
 }
 
-async function collectStagedDiff(deps: PushCommandDeps): Promise<string> {
+type StagedDiffResult =
+  | { cancelled: false; diff: string }
+  | { cancelled: true };
+
+async function collectStagedDiff(
+  options: PushCommandOptions,
+  deps: PushCommandDeps,
+  progress: (message: string) => void,
+): Promise<StagedDiffResult> {
   try {
-    return await (deps.collectGitDiff ?? defaultCollectGitDiff)({ mode: "staged" });
+    return {
+      cancelled: false,
+      diff: await (deps.collectGitDiff ?? defaultCollectGitDiff)({ mode: "staged" }),
+    };
   } catch (error) {
     const appError = toAppError(error);
     if (appError.code === "NO_DIFF") {
+      const hasUnstaged = await (deps.hasUnstagedChanges ?? defaultHasUnstagedChanges)();
+      if (hasUnstaged) {
+        if (!canPromptForStageChanges(options, deps)) {
+          throw new AppError({
+            code: "NO_DIFF",
+            message: "没有已暂存变更，当前环境不可交互，无法确认是否执行 git add -A。请先执行 git add 后重新运行 push。",
+            exitCode: 2,
+            recoverable: false,
+          });
+        }
+
+        progress("发现未暂存变更，等待用户确认是否加入暂存区...");
+        const shouldStage = await confirmStageChangesSafely(deps);
+        if (!shouldStage) {
+          return { cancelled: true };
+        }
+
+        progress("将工作区变更加入暂存区...");
+        await (deps.stageAllChanges ?? defaultStageAllChanges)();
+        progress("重新收集已暂存变更...");
+        return {
+          cancelled: false,
+          diff: await (deps.collectGitDiff ?? defaultCollectGitDiff)({ mode: "staged" }),
+        };
+      }
+
       throw new AppError({
         code: "NO_DIFF",
-        message: "没有已暂存变更，请先执行 git add。",
+        message: "没有可提交变更，请先修改文件或执行 git add。",
         exitCode: 2,
         recoverable: false,
       });
     }
     throw appError;
   }
+}
+
+async function confirmStageChangesSafely(deps: PushCommandDeps): Promise<boolean> {
+  try {
+    return await (deps.confirmStageChanges ?? defaultConfirmStageChanges)();
+  } catch (error) {
+    if (isPromptCancellation(error)) {
+      return false;
+    }
+    throw new AppError({
+      code: "INTERACTION_FAILED",
+      message: "无法读取暂存确认输入。",
+      exitCode: 2,
+      recoverable: false,
+      details: error,
+    });
+  }
+}
+
+function canPromptForStageChanges(options: PushCommandOptions, deps: PushCommandDeps): boolean {
+  if (options.nonInteractive) {
+    return false;
+  }
+  if (typeof deps.isInteractive === "boolean") {
+    return deps.isInteractive;
+  }
+  if (deps.confirmStageChanges) {
+    return true;
+  }
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
 function createDeepSeekProvider(
@@ -210,6 +289,13 @@ async function defaultConfirmRisk(reportMarkdown: string): Promise<boolean> {
   return confirm({
     message: "审查发现达到阈值的问题，仍然继续提交和推送吗？",
     default: false,
+  });
+}
+
+async function defaultConfirmStageChanges(): Promise<boolean> {
+  return confirm({
+    message: "发现有修改尚未加入暂存区，是否执行 git add -A 后继续？",
+    default: true,
   });
 }
 
