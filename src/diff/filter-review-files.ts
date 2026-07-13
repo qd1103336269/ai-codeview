@@ -3,7 +3,7 @@ import type { ReviewFileDiff } from "./parse-git-diff.js";
 
 export interface SkippedReviewFile {
   path: string;
-  reason: "ignored" | "binary";
+  reason: "ignored" | "binary" | "no-content-change";
 }
 
 export interface FilterReviewFilesResult {
@@ -19,6 +19,10 @@ export function filterReviewFiles(files: ReviewFileDiff[], patterns: string[]): 
   for (const file of files) {
     if (file.binary) {
       skipped.push({ path: file.path, reason: "binary" });
+      continue;
+    }
+    if (file.noContentChange) {
+      skipped.push({ path: file.path, reason: "no-content-change" });
       continue;
     }
     if (matcher.ignores(file.path)) {

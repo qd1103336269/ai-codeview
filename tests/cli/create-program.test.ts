@@ -1,6 +1,7 @@
 import stripAnsi from "strip-ansi";
 import { describe, expect, test, vi } from "vitest";
 import { createProgram } from "../../src/cli/create-program.js";
+import { version as pkgVersion } from "../../package.json";
 
 describe("createProgram", () => {
   test("passes review flags to review command handler", async () => {
@@ -241,5 +242,76 @@ describe("createProgram", () => {
     expect(runInitCommand).toHaveBeenCalledWith({ force: true });
     expect(process.exitCode).toBe(0);
     write.mockRestore();
+  });
+
+  test("rejects --fail-on with invalid value at CLI layer", async () => {
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const runReviewCommand = vi.fn();
+    const program = createProgram({ runReviewCommand });
+
+    await expect(program.parseAsync(["review", "--fail-on", "urgent"], { from: "user" })).rejects.toMatchObject({
+      code: "commander.invalidArgument",
+    });
+
+    expect(runReviewCommand).not.toHaveBeenCalled();
+    stdoutWrite.mockRestore();
+    stderrWrite.mockRestore();
+  });
+
+  test("rejects --format with invalid value at CLI layer", async () => {
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const runReviewCommand = vi.fn();
+    const program = createProgram({ runReviewCommand });
+
+    await expect(program.parseAsync(["review", "--format", "xml"], { from: "user" })).rejects.toMatchObject({
+      code: "commander.invalidArgument",
+    });
+
+    expect(runReviewCommand).not.toHaveBeenCalled();
+    stdoutWrite.mockRestore();
+    stderrWrite.mockRestore();
+  });
+
+  test("--version outputs package.json version", async () => {
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const program = createProgram();
+
+    await expect(program.parseAsync(["--version"], { from: "user" })).rejects.toMatchObject({
+      code: "commander.version",
+    });
+
+    const output = stdoutWrite.mock.calls.map((c) => c[0]?.toString() ?? "").join("");
+    expect(output.trim()).toBe(pkgVersion);
+    stdoutWrite.mockRestore();
+  });
+
+  test("maps config command throw to exitCode 2", async () => {
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const runConfigCommand = vi.fn().mockRejectedValue(new Error("boom"));
+    const program = createProgram({ runConfigCommand });
+
+    await program.parseAsync(["config"], { from: "user" });
+
+    expect(process.exitCode).toBe(2);
+    const stderrText = stderrWrite.mock.calls.map((c) => c[0]?.toString() ?? "").join("");
+    expect(stderrText).toContain("boom");
+    stderrWrite.mockRestore();
+    stdoutWrite.mockRestore();
+  });
+
+  test("maps doctor command throw to exitCode 2", async () => {
+    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const runDoctorCommand = vi.fn().mockRejectedValue(new Error("doctor failed"));
+    const program = createProgram({ runDoctorCommand });
+
+    await program.parseAsync(["doctor"], { from: "user" });
+
+    expect(process.exitCode).toBe(2);
+    stderrWrite.mockRestore();
+    stdoutWrite.mockRestore();
   });
 });

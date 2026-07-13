@@ -3,10 +3,11 @@ import { loadConfig } from "../config/load-config.js";
 import { chunkReviewInput } from "../diff/chunk-review-input.js";
 import { filterReviewFiles } from "../diff/filter-review-files.js";
 import { parseGitDiff } from "../diff/parse-git-diff.js";
-import { AppError, toAppError } from "../errors/app-error.js";
+import { AppError, isAppError, toAppError } from "../errors/app-error.js";
 import {
   collectGitDiff as defaultCollectGitDiff,
   commitStagedChanges as defaultCommitStagedChanges,
+  getHeadSha as defaultGetHeadSha,
   hasUnstagedChanges as defaultHasUnstagedChanges,
   pushCurrentBranch as defaultPushCurrentBranch,
   stageAllChanges as defaultStageAllChanges,
@@ -14,6 +15,7 @@ import {
 import type { AiProvider } from "../providers/ai-provider.js";
 import { DeepSeekProvider } from "../providers/deepseek-provider.js";
 import { resolveExitCode } from "../report/exit-code.js";
+import { filterByConfidence } from "../report/filter-by-confidence.js";
 import { renderMarkdownReport } from "../report/markdown-report.js";
 import { buildCommitMessagePrompt, sanitizeCommitMessage } from "../review/commit-message.js";
 import { reviewChunks } from "../review/review-orchestrator.js";
@@ -36,6 +38,7 @@ export interface CommitMessageDecision {
 export interface PushCommandDeps {
   collectGitDiff?: typeof defaultCollectGitDiff;
   commitStagedChanges?: typeof defaultCommitStagedChanges;
+  getHeadSha?: typeof defaultGetHeadSha;
   hasUnstagedChanges?: typeof defaultHasUnstagedChanges;
   pushCurrentBranch?: typeof defaultPushCurrentBranch;
   stageAllChanges?: typeof defaultStageAllChanges;
@@ -60,7 +63,7 @@ export async function runPushCommand(
     progress("收集已暂存变更...");
     const stagedDiffResult = await collectStagedDiff(options, deps, progress);
     if (stagedDiffResult.cancelled) {
-      return { exitCode: 1, output: "已取消提交和推送。" };
+      return { exitCode: 0, output: "已取消提交和推送。" };
     }
     const rawDiff = stagedDiffResult.diff;
     const config = await loadConfig({ cwd: deps.cwd ?? process.cwd(), overrides: { format: "markdown" } });
@@ -73,9 +76,11 @@ export async function runPushCommand(
     }
     const filtered = filterReviewFiles(parsed, config.ignore);
     const chunks = chunkReviewInput(filtered.reviewable, 40_000);
-    const report = chunks.length > 0 ? await reviewChunks({ chunks, provider }) : emptyReport();
-    const reportMarkdown = renderMarkdownReport(report);
-    const gateExitCode = resolveExitCode(report, config.failOn, config.confidenceFloor);
+    const commitMessageDiff = buildCommitMessageDiff(filtered.reviewable);
+    const report = chunks.length > 0 ? await reviewChunks({ chunks, provider, reportLanguage: config.reportLanguage, learningNotes: config.review.learningNotes }) : emptyReport();
+    const { report: visibleReport, filteredOut } = filterByConfidence(report, config.confidenceFloor);
+    const reportMarkdown = renderMarkdownReport(visibleReport, { reportLanguage: config.reportLanguage, filteredOut });
+    const gateExitCode = resolveExitCode(visibleReport, config.failOn, config.confidenceFloor);
 
     if (gateExitCode === 1) {
       progress("审查发现达到阈值的问题，等待用户确认...");
@@ -93,17 +98,18 @@ export async function runPushCommand(
       }
       const shouldContinue = await (deps.confirmRisk ?? defaultConfirmRisk)(reportMarkdown);
       if (!shouldContinue) {
-        return { exitCode: 1, output: "已取消提交和推送。" };
+        return { exitCode: 0, output: "已取消提交和推送。" };
       }
     }
 
-    const message = await resolveCommitMessage(options, deps, provider, rawDiff, progress);
+    const message = await resolveCommitMessage(options, deps, provider, commitMessageDiff, progress);
     if (!message) {
       throw new AppError({
-        code: "INVALID_CONFIG",
-        message: "提交信息不能为空。",
+        code: "EMPTY_COMMIT_MESSAGE",
+        message: "提交信息为空，已取消提交。",
         exitCode: 2,
         recoverable: false,
+        suggestion: "请重新运行并填写有效提交信息，或使用 --message 指定。",
       });
     }
 
@@ -122,13 +128,37 @@ export async function runPushCommand(
     }
 
     progress("推送到远程分支...");
-    await (deps.pushCurrentBranch ?? defaultPushCurrentBranch)();
+    let headSha: string | undefined;
+    try {
+      headSha = await (deps.getHeadSha ?? defaultGetHeadSha)();
+    } catch {
+      headSha = undefined;
+    }
+    try {
+      await (deps.pushCurrentBranch ?? defaultPushCurrentBranch)();
+    } catch (error) {
+      if (isAppError(error) && error.code === "PUSH_NO_UPSTREAM") {
+        throw error;
+      }
+      const shaHint = headSha ? `（HEAD=${headSha.slice(0, 12)}）` : "";
+      throw new AppError({
+        code: "PUSH_FAILED_ALREADY_COMMITTED",
+        message: `Git commit 已创建${shaHint}，但 push 失败。`,
+        exitCode: 2,
+        recoverable: false,
+        suggestion: headSha
+          ? `可执行 git reset --soft ${headSha}~1 回退此次提交后重试。`
+          : "可执行 git reset --soft HEAD~1 回退此次提交后重试。",
+        cause: error,
+      });
+    }
     progress("push 流程完成。");
 
     return { exitCode: 0, output: "提交和推送完成。" };
   } catch (error) {
     const appError = toAppError(error);
-    return { exitCode: appError.exitCode, output: appError.message };
+    const suggestion = appError.suggestion ? `\n${appError.suggestion}` : "";
+    return { exitCode: appError.exitCode, output: `${appError.message}${suggestion}` };
   }
 }
 
@@ -156,14 +186,29 @@ async function resolveCommitMessage(
   const decision = await confirmCommitMessageSafely(deps, generatedMessage);
   if (decision.action === "cancel") {
     throw new AppError({
-      code: "INTERACTION_FAILED",
+      code: "USER_CANCELLED",
       message: "已取消提交和推送。",
-      exitCode: 1,
+      exitCode: 0,
       recoverable: false,
     });
   }
 
   return (decision.action === "edit" ? decision.message : generatedMessage)?.trim() ?? "";
+}
+
+function buildCommitMessageDiff(files: ReturnType<typeof parseGitDiff>): string {
+  const MAX_CHARS = 40_000;
+  const parts: string[] = [];
+  let size = 0;
+  for (const file of files) {
+    if (size + file.raw.length > MAX_CHARS) {
+      parts.push(`（已截断，共 ${files.length} 个文件变更）`);
+      break;
+    }
+    parts.push(file.raw);
+    size += file.raw.length;
+  }
+  return parts.length > 0 ? parts.join("\n\n") : "";
 }
 
 function assertNoSecrets(files: ReturnType<typeof parseGitDiff>): void {
@@ -203,17 +248,12 @@ function isPromptCancellation(error: unknown): boolean {
     return false;
   }
 
-  const candidate = error as { name?: unknown; message?: unknown; code?: unknown };
+  const candidate = error as { name?: unknown; message?: unknown };
   const name = typeof candidate.name === "string" ? candidate.name : "";
   const message = typeof candidate.message === "string" ? candidate.message : "";
-  const code = typeof candidate.code === "string" ? candidate.code : "";
-  const signal = `${name} ${message} ${code}`.toLowerCase();
-  return (
-    signal.includes("cancel") ||
-    signal.includes("force closed") ||
-    signal.includes("exitprompt") ||
-    signal.includes("sigint")
-  );
+  if (name === "CancelPromptError") return true;
+  if (name === "ExitPromptError") return true;
+  return message === "canceled" || message === "Prompt canceled";
 }
 
 type StagedDiffResult =
@@ -321,6 +361,8 @@ function createDeepSeekProvider(
     model: config.model,
     thinking: config.thinking,
     reasoningEffort: config.reasoningEffort,
+    timeoutMs: config.timeoutMs,
+    maxRetries: config.maxRetries,
   });
 }
 

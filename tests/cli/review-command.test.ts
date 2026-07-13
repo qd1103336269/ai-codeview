@@ -276,7 +276,7 @@ describe("runReviewCommand", () => {
       },
     );
 
-    expect(result.output).toContain("AI Codeview Summary");
+    expect(result.output).toContain("AI 代码审查报告");
     expect(result.output).toContain("ACV-0001");
     expect(result.output).toContain("src/a.ts:1");
     expect(result.output).not.toContain("Detailed reason should stay out of summary.");
@@ -369,6 +369,41 @@ describe("runReviewCommand", () => {
     expect(result.exitCode).toBe(0);
     expect(collectGitDiff).not.toHaveBeenCalled();
     expect(provider.review).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps config output.file when only --format is passed", async () => {
+    const cwd = await makeTempDir();
+    await writeFile(
+      join(cwd, ".ai-codeview.json"),
+      JSON.stringify({ output: { format: "markdown", file: "review.md" } }),
+    );
+
+    const result = await runReviewCommand(
+      { format: "markdown" },
+      { collectGitDiff: collectGitDiffWithChange(), provider: providerReturningPass(), cwd },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("审查报告已写入");
+    const written = await readFile(join(cwd, "review.md"), "utf8");
+    expect(written).toContain("# AI 代码审查报告");
+  });
+
+  test("forces stdout with noOutputFile and ignores config output.file", async () => {
+    const cwd = await makeTempDir();
+    await writeFile(
+      join(cwd, ".ai-codeview.json"),
+      JSON.stringify({ output: { format: "markdown", file: "review.md" } }),
+    );
+
+    const result = await runReviewCommand(
+      { format: "markdown", noOutputFile: true },
+      { collectGitDiff: collectGitDiffWithChange(), provider: providerReturningPass(), cwd },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("# AI 代码审查报告");
+    await expect(access(join(cwd, "review.md"))).rejects.toThrow();
   });
 });
 

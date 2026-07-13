@@ -1,11 +1,16 @@
+import { createRequire } from "node:module";
 import { Chalk } from "chalk";
-import { Command } from "commander";
+import { Command, CommanderError, Option } from "commander";
 import { runConfigCommand as defaultRunConfigCommand } from "../commands/config-command.js";
 import { runDoctorCommand as defaultRunDoctorCommand } from "../commands/doctor-command.js";
 import { runInitCommand as defaultRunInitCommand } from "../commands/init-command.js";
 import { runPushCommand as defaultRunPushCommand } from "../commands/push-command.js";
 import { runReviewCommand as defaultRunReviewCommand } from "../commands/review-command.js";
 import type { OutputFormat, Severity } from "../config/config-schema.js";
+import { AppError, isAppError } from "../errors/app-error.js";
+
+const require = createRequire(import.meta.url);
+const pkgVersion = (require("../../package.json") as { version: string }).version;
 
 export interface CreateProgramDeps {
   runReviewCommand?: typeof defaultRunReviewCommand;
@@ -24,8 +29,10 @@ interface ReviewCliOptions {
   failOn?: Severity;
   format?: OutputFormat;
   output?: string;
+  stdoutOnly?: boolean;
   color?: boolean;
   allowSecrets?: boolean;
+  allowExternalPath?: boolean;
 }
 
 interface InitCliOptions {
@@ -49,6 +56,8 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
   const runDoctorCommand = deps.runDoctorCommand ?? defaultRunDoctorCommand;
   const program = new Command();
 
+  program.exitOverride();
+
   program
     .name("ai-codeview")
     .description("本地优先的 AI 代码审查 CLI，使用 DeepSeek 提供审查能力。")
@@ -63,7 +72,7 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     })
     .helpOption("-h, --help", "显示命令帮助")
     .helpCommand("help [command]", "显示命令帮助")
-    .version("0.4.0", "-V, --version", "显示版本号");
+    .version(pkgVersion, "-V, --version", "显示版本号");
 
   program
     .command("review")
@@ -73,32 +82,34 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     .option("--base <branch>", "审查当前分支相对 base 分支的变更")
     .option("--path <path>", "审查指定路径的文件或目录，支持相对路径和绝对路径", collectPathOption, [])
     .option("--summary", "只输出风险摘要和 finding 列表")
-    .option("--fail-on <severity>", "当 finding 达到指定严重等级时返回失败退出码")
-    .option("--format <format>", "输出格式")
+    .addOption(new Option("--fail-on <severity>", "当 finding 达到指定严重等级时返回失败退出码").choices(["critical", "high", "medium", "low"]))
+    .addOption(new Option("--format <format>", "输出格式").choices(["text", "markdown", "json"]))
     .option("--output <file>", "把报告写入文件")
+    .option("--stdout-only", "强制将报告输出到 stdout，忽略配置文件中的 output.file")
     .option("--color", "强制 text 输出使用 ANSI 颜色")
     .option("--no-color", "禁用 text 输出中的 ANSI 颜色")
     .option("--allow-secrets", "允许把包含疑似密钥的 diff 发送给 provider")
+    .option("--allow-external-path", "允许审查工作目录外的绝对路径")
     .action(async (options: ReviewCliOptions) => {
-      const result = await runReviewCommand(
-        {
-          staged: options.staged,
-          base: options.base,
-          path: options.path?.length ? options.path : undefined,
-          changed: options.changed,
-          summary: options.summary,
-          failOn: options.failOn,
-          format: options.format,
-          output: options.output,
-          color: options.color,
-          allowSecrets: options.allowSecrets,
+      const reviewOptions: Parameters<typeof runReviewCommand>[0] = {
+        staged: options.staged,
+        base: options.base,
+        path: options.path?.length ? options.path : undefined,
+        changed: options.changed,
+        summary: options.summary,
+        failOn: options.failOn,
+        format: options.format,
+        output: options.output,
+        color: options.color,
+        allowSecrets: options.allowSecrets,
+        ...(options.stdoutOnly ? { noOutputFile: true } : {}),
+        ...(options.allowExternalPath ? { allowExternalPath: true } : {}),
+      };
+      const result = await runReviewCommand(reviewOptions, {
+        onProgress: (message) => {
+          process.stderr.write(`${formatProgressMessage(message)}\n`);
         },
-        {
-          onProgress: (message) => {
-            process.stderr.write(`${formatProgressMessage(message)}\n`);
-          },
-        },
-      );
+      });
       process.stdout.write(`${result.output}\n`);
       process.exitCode = result.exitCode;
     });
@@ -114,7 +125,11 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     });
 
   program.command("config").description("打印最终生效配置").action(async () => {
-    process.stdout.write(`${await runConfigCommand()}\n`);
+    try {
+      process.stdout.write(`${await runConfigCommand()}\n`);
+    } catch (error) {
+      emitTopLevelError(error);
+    }
   });
 
   program
@@ -145,12 +160,32 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     });
 
   program.command("doctor").description("检查本地运行环境和配置").action(async () => {
-    const result = await runDoctorCommand();
-    process.stdout.write(`${result.output}\n`);
-    process.exitCode = result.exitCode;
+    try {
+      const result = await runDoctorCommand();
+      process.stdout.write(`${result.output}\n`);
+      process.exitCode = result.exitCode;
+    } catch (error) {
+      emitTopLevelError(error);
+    }
   });
 
   return program;
+}
+
+function emitTopLevelError(error: unknown): void {
+  if (error instanceof CommanderError) {
+    process.exitCode = error.exitCode;
+    return;
+  }
+  const appError = isAppError(error) ? error : new AppError({
+    code: "UNKNOWN_ERROR",
+    message: error instanceof Error ? error.message : "工具运行时发生未知错误。",
+    exitCode: 2,
+    recoverable: false,
+    cause: error,
+  });
+  process.stderr.write(`${appError.message}\n`);
+  process.exitCode = appError.exitCode;
 }
 
 function collectPathOption(value: string, previous: string[]): string[] {
@@ -158,50 +193,29 @@ function collectPathOption(value: string, previous: string[]): string[] {
 }
 
 function formatProgressMessage(message: string): string {
-  if (message.includes("检查 Git 状态")) {
-    return progressChalk.cyan(`🔍 ${message}`);
-  }
-  if (message.includes("已暂存变更")) {
-    return progressChalk.cyan(`📥 ${message}`);
-  }
-  if (message.includes("达到阈值")) {
-    return progressChalk.yellow(`⚠️ ${message}`);
-  }
-  if (message.includes("提交信息")) {
-    return progressChalk.magenta(`🧠 ${message}`);
-  }
-  if (message.includes("Git commit")) {
-    return progressChalk.yellow(`📝 ${message}`);
-  }
-  if (message.includes("远程分支")) {
-    return progressChalk.cyan(`🚀 ${message}`);
-  }
-  if (message.includes("push 流程完成")) {
-    return progressChalk.green(`✅ ${message}`);
-  }
-  if (message.includes("开始")) {
-    return progressChalk.cyan(`🚀 ${message}`);
-  }
-  if (message.includes("DeepSeek")) {
-    return progressChalk.magenta(`🤖 ${message}`);
-  }
-  if (message.includes("完成")) {
-    return progressChalk.green(`✅ ${message}`);
-  }
-  if (message.includes("敏感信息")) {
-    return progressChalk.yellow(`🛡️ ${message}`);
-  }
-  if (message.includes("写入")) {
-    return progressChalk.yellow(`📝 ${message}`);
-  }
-  if (message.includes("配置")) {
-    return progressChalk.cyan(`⚙️ ${message}`);
-  }
-  if (message.includes("Git diff")) {
-    return progressChalk.cyan(`📥 ${message}`);
-  }
-  if (message.includes("解析") || message.includes("过滤") || message.includes("分块")) {
-    return progressChalk.cyan(`🔍 ${message}`);
+  const rules: Array<{ keyword: string; emoji: string; color: (s: string) => string }> = [
+    { keyword: "检查 Git 状态", emoji: "🔍", color: progressChalk.cyan },
+    { keyword: "已暂存变更", emoji: "📥", color: progressChalk.cyan },
+    { keyword: "达到阈值", emoji: "⚠️", color: progressChalk.yellow },
+    { keyword: "提交信息", emoji: "🧠", color: progressChalk.magenta },
+    { keyword: "Git commit", emoji: "📝", color: progressChalk.yellow },
+    { keyword: "远程分支", emoji: "🚀", color: progressChalk.cyan },
+    { keyword: "push 流程完成", emoji: "✅", color: progressChalk.green },
+    { keyword: "开始", emoji: "🚀", color: progressChalk.cyan },
+    { keyword: "DeepSeek", emoji: "🤖", color: progressChalk.magenta },
+    { keyword: "完成", emoji: "✅", color: progressChalk.green },
+    { keyword: "敏感信息", emoji: "🛡️", color: progressChalk.yellow },
+    { keyword: "写入", emoji: "📝", color: progressChalk.yellow },
+    { keyword: "配置", emoji: "⚙️", color: progressChalk.cyan },
+    { keyword: "Git diff", emoji: "📥", color: progressChalk.cyan },
+    { keyword: "解析", emoji: "🔍", color: progressChalk.cyan },
+    { keyword: "过滤", emoji: "🔍", color: progressChalk.cyan },
+    { keyword: "分块", emoji: "🔍", color: progressChalk.cyan },
+  ];
+  for (const rule of rules) {
+    if (message.includes(rule.keyword)) {
+      return rule.color(`${rule.emoji} ${message}`);
+    }
   }
   return progressChalk.cyan(`• ${message}`);
 }

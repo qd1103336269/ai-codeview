@@ -11,6 +11,7 @@ type ChatCompletionInput = {
   thinking?: { type: "enabled" | "disabled" };
   reasoning_effort?: "high" | "max";
   stream?: false;
+  signal?: AbortSignal;
   [key: string]: unknown;
 };
 
@@ -30,15 +31,22 @@ export interface DeepSeekProviderOptions {
   model: "deepseek-v4-pro" | "deepseek-v4-flash";
   thinking?: boolean;
   reasoningEffort?: "high" | "max";
+  timeoutMs?: number;
   maxRetries?: number;
+  sleep?: (ms: number) => Promise<void>;
   createChatCompletion?: CreateChatCompletion;
 }
+
+const DEFAULT_TIMEOUT_MS = 60_000;
+const MAX_BACKOFF_MS = 30_000;
 
 export class DeepSeekProvider implements AiProvider {
   private readonly model: DeepSeekProviderOptions["model"];
   private readonly thinking: boolean;
   private readonly reasoningEffort: "high" | "max";
   private readonly maxRetries: number;
+  private readonly timeoutMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
   private readonly createChatCompletion: CreateChatCompletion;
 
   constructor(options: DeepSeekProviderOptions) {
@@ -46,7 +54,14 @@ export class DeepSeekProvider implements AiProvider {
     this.thinking = options.thinking ?? true;
     this.reasoningEffort = options.reasoningEffort ?? "high";
     this.maxRetries = options.maxRetries ?? 2;
-    const client = new OpenAI({ apiKey: options.apiKey, baseURL: options.baseUrl });
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.sleep = options.sleep ?? defaultSleep;
+    const client = new OpenAI({
+      apiKey: options.apiKey,
+      baseURL: options.baseUrl,
+      timeout: this.timeoutMs,
+      maxRetries: 0,
+    });
     this.createChatCompletion =
       options.createChatCompletion ??
       ((input) => client.chat.completions.create(input as never) as Promise<ChatCompletionOutput>);
@@ -97,6 +112,7 @@ export class DeepSeekProvider implements AiProvider {
       thinking: { type: this.thinking ? "enabled" : "disabled" },
       reasoning_effort: this.reasoningEffort,
       stream: false,
+      signal: AbortSignal.timeout(this.timeoutMs),
     };
   }
 
@@ -107,6 +123,7 @@ export class DeepSeekProvider implements AiProvider {
       thinking: { type: this.thinking ? "enabled" : "disabled" },
       reasoning_effort: this.reasoningEffort,
       stream: false,
+      signal: AbortSignal.timeout(this.timeoutMs),
     };
   }
 
@@ -145,11 +162,30 @@ export class DeepSeekProvider implements AiProvider {
         if (!isRetryableProviderError(appError) || attempt === this.maxRetries) {
           throw appError;
         }
+        const retryAfterMs = getRetryAfterMs(error);
+        const backoff = retryAfterMs ?? Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
+        await this.sleep(backoff);
       }
     }
 
     throw lastError;
   }
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getRetryAfterMs(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const headers = (error as { headers?: unknown }).headers;
+  if (!headers || typeof headers !== "object") return undefined;
+  const value = (headers as Record<string, unknown>)["retry-after"];
+  if (typeof value === "string") {
+    const num = Number(value);
+    if (Number.isFinite(num) && num > 0) return num * 1000;
+  }
+  return undefined;
 }
 
 function parseReviewCompletion(completion: ChatCompletionOutput): ReviewReport {
@@ -186,6 +222,17 @@ function toProviderAppError(error: unknown): AppError {
     return error;
   }
 
+  if (isAbortError(error)) {
+    return new AppError({
+      code: "PROVIDER_TIMEOUT",
+      message: "DeepSeek 请求超时。",
+      exitCode: 2,
+      recoverable: true,
+      suggestion: "请增大 timeoutMs 配置，或缩小本次审查范围后重试。",
+      details: sanitizeError(error),
+    });
+  }
+
   const status = getErrorStatus(error);
   if (status === 401 || status === 403) {
     return new AppError({
@@ -194,7 +241,7 @@ function toProviderAppError(error: unknown): AppError {
       exitCode: 2,
       recoverable: false,
       suggestion: "请检查配置的 DeepSeek API key。",
-      details: error,
+      details: sanitizeError(error),
     });
   }
   if (status === 429) {
@@ -204,7 +251,7 @@ function toProviderAppError(error: unknown): AppError {
       exitCode: 2,
       recoverable: true,
       suggestion: "请稍后重试，或缩小本次审查范围。",
-      details: error,
+      details: sanitizeError(error),
     });
   }
   if (status && status >= 400 && status < 500) {
@@ -214,7 +261,7 @@ function toProviderAppError(error: unknown): AppError {
       exitCode: 2,
       recoverable: false,
       suggestion: "请检查配置的模型、baseUrl 和 DeepSeek 请求参数。",
-      details: error,
+      details: sanitizeError(error),
     });
   }
   if (status && status >= 500) {
@@ -224,7 +271,7 @@ function toProviderAppError(error: unknown): AppError {
       exitCode: 2,
       recoverable: true,
       suggestion: "请稍后重试。",
-      details: error,
+      details: sanitizeError(error),
     });
   }
   if (isNetworkError(error)) {
@@ -234,7 +281,7 @@ function toProviderAppError(error: unknown): AppError {
       exitCode: 2,
       recoverable: true,
       suggestion: "请检查网络、DNS、代理或防火墙设置。",
-      details: error,
+      details: sanitizeError(error),
     });
   }
 
@@ -243,12 +290,41 @@ function toProviderAppError(error: unknown): AppError {
     message: "DeepSeek 请求失败。",
     exitCode: 2,
     recoverable: true,
-    details: error,
+    details: sanitizeError(error),
   });
 }
 
 function isRetryableProviderError(error: AppError): boolean {
-  return error.code === "PROVIDER_RATE_LIMITED" || error.code === "PROVIDER_UNAVAILABLE";
+  return (
+    error.code === "PROVIDER_RATE_LIMITED" ||
+    error.code === "PROVIDER_UNAVAILABLE" ||
+    error.code === "PROVIDER_TIMEOUT"
+  );
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = (error as { name?: unknown }).name;
+  if (name === "AbortError") return true;
+  const code = (error as { code?: unknown }).code;
+  return code === "ABORT_ERR";
+}
+
+function sanitizeError(error: unknown): unknown {
+  if (!error || typeof error !== "object") return undefined;
+  const candidate = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    message?: unknown;
+    code?: unknown;
+    response?: { status?: unknown };
+  };
+  const status = candidate.status ?? candidate.statusCode ?? candidate.response?.status;
+  return {
+    status: typeof status === "number" ? status : undefined,
+    message: typeof candidate.message === "string" ? candidate.message : undefined,
+    code: typeof candidate.code === "string" ? candidate.code : undefined,
+  };
 }
 
 function getErrorStatus(error: unknown): number | undefined {

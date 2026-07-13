@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   collectGitDiff,
   commitStagedChanges,
+  getHeadSha,
   hasUnstagedChanges,
   pushCurrentBranch,
   stageAllChanges,
@@ -22,7 +23,11 @@ describe("collectGitDiff", () => {
 
     await collectGitDiff({ mode: "staged", run });
 
-    expect(run).toHaveBeenCalledWith("git", ["diff", "--staged"]);
+    expect(run).toHaveBeenCalledWith("git", [
+      "-c", "core.quotepath=false",
+      "-c", "diff.renames=false",
+      "diff", "--staged",
+    ]);
   });
 
   test("uses HEAD diff when mode is changed", async () => {
@@ -30,7 +35,11 @@ describe("collectGitDiff", () => {
 
     await collectGitDiff({ mode: "changed", run });
 
-    expect(run).toHaveBeenCalledWith("git", ["diff", "HEAD"]);
+    expect(run).toHaveBeenCalledWith("git", [
+      "-c", "core.quotepath=false",
+      "-c", "diff.renames=false",
+      "diff", "HEAD",
+    ]);
   });
 
   test("uses merge-base diff when base branch is provided", async () => {
@@ -38,7 +47,11 @@ describe("collectGitDiff", () => {
 
     await collectGitDiff({ mode: "base", base: "main", run });
 
-    expect(run).toHaveBeenCalledWith("git", ["diff", "main...HEAD"]);
+    expect(run).toHaveBeenCalledWith("git", [
+      "-c", "core.quotepath=false",
+      "-c", "diff.renames=false",
+      "diff", "main...HEAD",
+    ]);
   });
 });
 
@@ -67,22 +80,16 @@ describe("hasUnstagedChanges", () => {
 
     await expect(hasUnstagedChanges({ run })).resolves.toBe(false);
 
-    expect(run).toHaveBeenCalledWith("git", ["status", "--porcelain"]);
+    expect(run).toHaveBeenCalledWith("git", ["diff", "--quiet"]);
   });
 
-  test("returns true when working tree has unstaged modifications", async () => {
-    const run = vi.fn().mockResolvedValue({ stdout: " M src/a.ts" });
+  test("returns true when git diff --quiet exits with code 1", async () => {
+    const run = vi.fn().mockRejectedValue(Object.assign(new Error("diff"), { exitCode: 1 }));
 
     await expect(hasUnstagedChanges({ run })).resolves.toBe(true);
   });
 
-  test("returns true when working tree has untracked files", async () => {
-    const run = vi.fn().mockResolvedValue({ stdout: "?? src/new.ts" });
-
-    await expect(hasUnstagedChanges({ run })).resolves.toBe(true);
-  });
-
-  test("maps git status execution failure to GIT_STATUS_FAILED", async () => {
+  test("maps git diff execution failure to GIT_STATUS_FAILED", async () => {
     const run = vi.fn().mockRejectedValue({ exitCode: 128 });
 
     await expect(hasUnstagedChanges({ run })).rejects.toMatchObject({
@@ -138,11 +145,54 @@ describe("pushCurrentBranch", () => {
     expect(run).toHaveBeenCalledWith("git", ["push"]);
   });
 
-  test("maps push failure to GIT_PUSH_FAILED", async () => {
-    const run = vi.fn().mockRejectedValue(new Error("push failed"));
+  test("falls back to git push -u origin <branch> when initial push fails", async () => {
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("no upstream"))
+      .mockResolvedValueOnce({ stdout: "feature" })
+      .mockResolvedValueOnce({ stdout: "" });
+
+    await pushCurrentBranch({ run });
+
+    expect(run).toHaveBeenNthCalledWith(3, "git", ["push", "-u", "origin", "feature"]);
+  });
+
+  test("maps push failure with no upstream fallback to PUSH_NO_UPSTREAM", async () => {
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("no upstream"))
+      .mockResolvedValueOnce({ stdout: "feature" })
+      .mockRejectedValueOnce(new Error("origin rejected"));
 
     await expect(pushCurrentBranch({ run })).rejects.toMatchObject({
-      code: "GIT_PUSH_FAILED",
+      code: "PUSH_NO_UPSTREAM",
+      exitCode: 2,
+    });
+  });
+
+  test("maps missing git executable to GIT_NOT_FOUND", async () => {
+    const run = vi.fn().mockRejectedValue({ code: "ENOENT" });
+
+    await expect(pushCurrentBranch({ run })).rejects.toMatchObject({
+      code: "GIT_NOT_FOUND",
+      exitCode: 2,
+    });
+  });
+});
+
+describe("getHeadSha", () => {
+  test("returns trimmed HEAD sha", async () => {
+    const run = vi.fn().mockResolvedValue({ stdout: "abc123def456\n" });
+
+    await expect(getHeadSha({ run })).resolves.toBe("abc123def456");
+    expect(run).toHaveBeenCalledWith("git", ["rev-parse", "HEAD"]);
+  });
+
+  test("maps failure to GIT_STATUS_FAILED", async () => {
+    const run = vi.fn().mockRejectedValue(new Error("boom"));
+
+    await expect(getHeadSha({ run })).rejects.toMatchObject({
+      code: "GIT_STATUS_FAILED",
       exitCode: 2,
     });
   });

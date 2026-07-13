@@ -8,6 +8,7 @@ const file = (path: string): ReviewFileDiff => ({
   deletions: 0,
   raw: "diff",
   binary: false,
+  noContentChange: false,
 });
 
 describe("filterReviewFiles", () => {
@@ -25,5 +26,21 @@ describe("filterReviewFiles", () => {
 
     expect(result.reviewable.map((item) => item.path)).toEqual(["src/a.ts"]);
     expect(result.skipped).toHaveLength(4);
+  });
+
+  test("skips noContentChange files with distinct reason", () => {
+    const result = filterReviewFiles(
+      [
+        file("src/a.ts"),
+        { ...file("script.sh"), additions: 0, deletions: 0, noContentChange: true },
+      ],
+      [],
+    );
+
+    expect(result.reviewable.map((item) => item.path)).toEqual(["src/a.ts"]);
+    expect(result.skipped).toContainEqual({
+      path: "script.sh",
+      reason: "no-content-change",
+    });
   });
 });

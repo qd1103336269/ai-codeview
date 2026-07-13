@@ -28,6 +28,14 @@ export interface PushCurrentBranchInput {
   run?: RunCommand;
 }
 
+export interface GetHeadShaInput {
+  run?: RunCommand;
+}
+
+export interface GetCurrentBranchInput {
+  run?: RunCommand;
+}
+
 const defaultRun: RunCommand = async (file, args) => {
   return execa(file, args);
 };
@@ -84,8 +92,8 @@ export async function hasUnstagedChanges(input: HasUnstagedChangesInput = {}): P
   const run = input.run ?? defaultRun;
 
   try {
-    const result = await run("git", ["status", "--porcelain"]);
-    return result.stdout.trim().length > 0;
+    await run("git", ["diff", "--quiet"]);
+    return false;
   } catch (error) {
     if (isCommandNotFound(error)) {
       throw new AppError({
@@ -97,7 +105,10 @@ export async function hasUnstagedChanges(input: HasUnstagedChangesInput = {}): P
         details: error,
       });
     }
-
+    const exitCode = (error as { exitCode?: unknown }).exitCode;
+    if (typeof exitCode === "number" && exitCode === 1) {
+      return true;
+    }
     throw new AppError({
       code: "GIT_STATUS_FAILED",
       message: "Git status 执行失败。",
@@ -130,17 +141,72 @@ export async function pushCurrentBranch(input: PushCurrentBranchInput = {}): Pro
   const run = input.run ?? defaultRun;
 
   try {
-    await run("git", ["push"]);
+    await run("git", pushArgs());
+  } catch (error) {
+    if (isCommandNotFound(error)) {
+      throw new AppError({
+        code: "GIT_NOT_FOUND",
+        message: "无法执行 Git 命令。",
+        exitCode: 2,
+        recoverable: false,
+        suggestion: "请安装 Git，并确认它已经加入 PATH。",
+        details: error,
+      });
+    }
+    const branch = await safeGetCurrentBranch(run);
+    if (!branch) {
+      throw new AppError({
+        code: "GIT_PUSH_FAILED",
+        message: "Git push 执行失败。",
+        exitCode: 2,
+        recoverable: false,
+        suggestion: "请检查远程仓库、网络、认证和 upstream 配置后重试。",
+        details: error,
+      });
+    }
+    try {
+      await run("git", ["push", "-u", "origin", branch]);
+    } catch (upstreamError) {
+      throw new AppError({
+        code: "PUSH_NO_UPSTREAM",
+        message: `当前分支 ${branch} 未配置 upstream，自动设置 origin upstream 也失败。`,
+        exitCode: 2,
+        recoverable: false,
+        suggestion: "请手动执行 git push -u origin <branch> 配置 upstream 后重试。",
+        details: upstreamError,
+      });
+    }
+  }
+}
+
+export async function getHeadSha(input: GetHeadShaInput = {}): Promise<string> {
+  const run = input.run ?? defaultRun;
+  try {
+    const result = await run("git", ["rev-parse", "HEAD"]);
+    return result.stdout.trim();
   } catch (error) {
     throw new AppError({
-      code: "GIT_PUSH_FAILED",
-      message: "Git push 执行失败。",
+      code: "GIT_STATUS_FAILED",
+      message: "无法读取当前 commit SHA。",
       exitCode: 2,
       recoverable: false,
-      suggestion: "请检查远程仓库、网络、认证和 upstream 配置后重试。",
       details: error,
     });
   }
+}
+
+async function safeGetCurrentBranch(run: RunCommand): Promise<string | undefined> {
+  try {
+    const result = await run("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const branch = result.stdout.trim();
+    return branch && branch !== "HEAD" ? branch : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function pushArgs(): string[] {
+  return ["push"];
 }
 
 function isCommandNotFound(error: unknown): boolean {
@@ -154,11 +220,12 @@ function isCommandNotFound(error: unknown): boolean {
 }
 
 function getDiffArgs(input: CollectGitDiffInput): string[] {
+  const prefix = ["-c", "core.quotepath=false", "-c", "diff.renames=false"];
   if (input.mode === "staged") {
-    return ["diff", "--staged"];
+    return [...prefix, "diff", "--staged"];
   }
   if (input.mode === "changed") {
-    return ["diff", "HEAD"];
+    return [...prefix, "diff", "HEAD"];
   }
   if (input.mode === "base") {
     if (!input.base?.trim()) {
@@ -169,7 +236,7 @@ function getDiffArgs(input: CollectGitDiffInput): string[] {
         recoverable: false,
       });
     }
-    return ["diff", `${input.base}...HEAD`];
+    return [...prefix, "diff", `${input.base}...HEAD`];
   }
-  return ["diff"];
+  return [...prefix, "diff"];
 }

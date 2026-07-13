@@ -174,6 +174,8 @@ acv review --summary
 acv review --format markdown --output review.md
 acv review --format json
 acv review --fail-on high
+acv review --stdout-only
+acv review --allow-external-path
 acv push
 acv push --dry-run
 acv push --no-push
@@ -246,6 +248,9 @@ acv review --path src
 - 可以重复传入多个 `--path`。
 - `--path` 不能和 `--staged` 同时使用。
 - `--path` 不能和 `--base` 同时使用。
+- 默认拒绝工作目录外的路径，避免把本地敏感文件（如 `.ssh`、`.env`）发送给 DeepSeek。如需审查外部路径，请使用 `--allow-external-path` 或在配置中设置 `input.allowExternalPath: true`。
+- 单文件超过 `input.maxFileBytes`（默认 1MB）会被跳过，不会读入内存。
+- 路径模式会自动跳过 `.git` 目录和匹配 `ignore` 规则的子树，避免递归扫描 `node_modules` 等大目录。
 
 ## 输出报告
 
@@ -297,9 +302,9 @@ AI Codeview 使用稳定退出码，方便脚本或 CI 判断结果。
 
 | 退出码 | 含义 | 常见场景 |
 | --- | --- | --- |
-| `0` | 命令运行成功，且没有达到阻断阈值的问题 | 审查通过、没有可审查 diff |
-| `1` | 命令运行成功，但审查结果达到 `failOn` 阈值 | 存在 high/critical finding，或用户取消高风险 push |
-| `2` | 工具运行失败 | Git、配置、DeepSeek、路径、输出、交互输入失败 |
+| `0` | 命令运行成功，且没有达到阻断阈值的问题 | 审查通过、没有可审查 diff、用户取消提交或推送 |
+| `1` | 命令运行成功，但审查结果达到 `failOn` 阈值 | 存在 high/critical finding |
+| `2` | 工具运行失败 | Git、配置、DeepSeek、路径、输出、密钥检测、超时等失败 |
 
 ## 提交并推送
 
@@ -401,11 +406,25 @@ AI Codeview 会查找以下配置文件：
   "model": "deepseek-v4-pro",
   "baseUrl": "https://api.deepseek.com",
   "apiKeyEnv": "DEEPSEEK_API_KEY",
+  "timeoutMs": 60000,
+  "maxRetries": 2,
   "reportLanguage": "zh-CN",
   "failOn": "high",
   "confidenceFloor": "medium",
+  "review": {
+    "security": true,
+    "bugs": true,
+    "quality": true,
+    "tests": true,
+    "learningNotes": true,
+    "continueOnError": true
+  },
   "security": {
     "allowSecrets": false
+  },
+  "input": {
+    "maxFileBytes": 1048576,
+    "allowExternalPath": false
   },
   "output": {
     "format": "markdown",
@@ -424,16 +443,35 @@ AI Codeview 会查找以下配置文件：
 | `model` | DeepSeek 模型名称。 |
 | `baseUrl` | DeepSeek API 地址，默认是 `https://api.deepseek.com`。 |
 | `apiKeyEnv` | 读取 API Key 的环境变量名，默认是 `DEEPSEEK_API_KEY`。 |
-| `reportLanguage` | AI 报告语言，可使用 `zh-CN` 或 `en-US`，默认 `zh-CN`。 |
+| `timeoutMs` | DeepSeek 请求超时毫秒数，默认 `60000`。 |
+| `maxRetries` | DeepSeek 请求失败重试次数，默认 `2`，带指数退避。 |
+| `reportLanguage` | AI 报告语言，可使用 `zh-CN` 或 `en-US`，默认 `zh-CN`。同时影响报告标题、标签和 AI 输出语言。 |
 | `failOn` | 严重等级 gate，达到该等级时返回退出码 `1`。 |
-| `confidenceFloor` | finding 最低置信度过滤阈值。 |
+| `confidenceFloor` | finding 最低置信度过滤阈值，同时作用于渲染和退出码。 |
+| `review.continueOnError` | 单个分块审查失败时是否继续输出部分结果，默认 `true`。 |
+| `review.learningNotes` | 是否让 AI 生成学习说明字段，默认 `true`。 |
 | `security.allowSecrets` | 是否允许把疑似密钥内容发送给 provider，默认 `false`。 |
+| `input.maxFileBytes` | 路径模式下单文件最大字节数，超过则跳过，默认 `1048576`（1MB）。 |
+| `input.allowExternalPath` | 是否允许审查工作目录外的绝对路径，默认 `false`。 |
 | `output.format` | 默认输出格式，可使用 `text`、`markdown` 或 `json`。 |
 | `output.file` | 默认输出文件路径，`null` 表示只输出到终端。 |
 
 ## 敏感信息保护
 
 AI Codeview 会在发送内容给 DeepSeek 前扫描疑似密钥。命中后默认中止审查，避免把敏感信息发送给外部 provider。
+
+目前覆盖的密钥模式：
+
+- AWS Access Key（`AKIA`/`ASIA` 前缀）
+- PEM 私钥块（`-----BEGIN ... PRIVATE KEY-----`）
+- DeepSeek / OpenAI 风格 `sk-` 前缀密钥
+- GitHub PAT（`ghp_`/`gho_`/`ghu_`/`ghs_`/`github_pat_`）
+- GitLab PAT（`glpat-`）
+- Slack token（`xox[baprs]-`）
+- Google API Key（`AIza...`）
+- Stripe（`sk_live_`/`rk_live_`/`pk_live_` 等）
+- JWT（三段 `eyJ....eyJ........`）
+- 通用赋值形 `api_key/token/secret/password/signingKey/jwtSecret = "..."`（值长度 ≥ 24）
 
 如果你确认本次内容可以发送，可以显式放行：
 
@@ -498,7 +536,7 @@ acv doctor
 
 ## 版本状态
 
-当前版本：`0.4.0`
+当前版本：`0.4.2`
 
 已支持：
 
@@ -507,7 +545,7 @@ acv doctor
 - 暂存区 diff 审查。
 - Text、Markdown、JSON 输出。
 - `acv review --summary` 输出风险摘要和 finding 列表。
-- `reportLanguage` 报告语言配置。
+- `reportLanguage` 报告语言配置（zh-CN / en-US，影响报告标题、标签和 AI 输出语言）。
 - DeepSeek provider。
 - 严重等级 gate。
 - 指定绝对路径文件或目录审查。
@@ -519,6 +557,19 @@ acv doctor
 - `acv push --no-push` 只提交不推送。
 - `acv push --message` 指定提交信息。
 - `acv doctor` 本地环境诊断。
+- 路径越界防护：默认拒绝工作目录外的路径，`--allow-external-path` 显式放行。
+- 单文件大小限制：`input.maxFileBytes` 默认 1MB，超限跳过。
+- 密钥检测覆盖 GitHub PAT、Slack、JWT、Stripe、GCP、GitLab 等主流模式。
+- CJK 和含空格文件名 diff 解析。
+- 单文件超大 diff 按行分块，不截断单行。
+- 分块审查失败容错：默认继续输出部分结果（`review.continueOnError`）。
+- 跨 chunk 同问题去重。
+- DeepSeek 请求超时与指数退避重试（`timeoutMs`、`maxRetries` 可配置）。
+- 报告渲染转义 AI 输出，防止 Markdown 注入。
+- `confidenceFloor` 同时作用于渲染和退出码，数据口径一致。
+- push 失败后提示 `git reset --soft` 回滚。
+- push 无 upstream 时自动尝试 `git push -u origin <branch>`。
+- 用户取消统一返回退出码 `0`，审查不通过返回 `1`。
 
 计划中：
 
@@ -574,6 +625,20 @@ $env:DEEPSEEK_API_KEY
 ### 为什么推荐 `acv` 而不是 `ac`？
 
 `ac` 更短，但 PowerShell 默认也有一个 `ac` alias，指向 `Add-Content`。为了减少 Windows 用户的命令冲突，推荐优先使用 `acv`。如果你的终端里 `ac` 没有冲突，也可以继续使用 `ac`。
+
+### `acv push` 提示 "Git commit 已创建，但 push 失败" 怎么办？
+
+这意味着 commit 已经成功创建，但 `git push` 失败。错误信息会包含当前 HEAD 的短 SHA，并建议执行：
+
+```bash
+git reset --soft HEAD~1
+```
+
+回退此次提交后，解决 push 问题（网络、权限、upstream 等）再重新运行 `acv push`。
+
+### `--format` 会覆盖配置文件里的 `output.file` 吗？
+
+不会。从 v0.4.2 起，`--format` 只影响输出格式，不会抹掉配置文件中的 `output.file`。如果你想强制输出到 stdout 而忽略配置的 `output.file`，请使用 `--stdout-only`。
 
 ### 代码会发送到哪里？
 

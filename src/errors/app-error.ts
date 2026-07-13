@@ -3,14 +3,18 @@ export type AppErrorCode =
   | "GIT_NOT_FOUND"
   | "NO_DIFF"
   | "INVALID_CONFIG"
+  | "INVALID_CLI_INPUT"
   | "INVALID_PATH_INPUT"
   | "PATH_NOT_FOUND"
+  | "PATH_OUTSIDE_CWD"
+  | "FILE_TOO_LARGE"
   | "MISSING_API_KEY"
   | "SECRET_DETECTED"
   | "PROVIDER_AUTH_FAILED"
   | "PROVIDER_BAD_REQUEST"
   | "PROVIDER_RATE_LIMITED"
   | "PROVIDER_UNAVAILABLE"
+  | "PROVIDER_TIMEOUT"
   | "DIFF_TOO_LARGE"
   | "AI_RESPONSE_INVALID"
   | "OUTPUT_WRITE_FAILED"
@@ -18,6 +22,10 @@ export type AppErrorCode =
   | "GIT_COMMIT_FAILED"
   | "GIT_PUSH_FAILED"
   | "GIT_STATUS_FAILED"
+  | "PUSH_NO_UPSTREAM"
+  | "PUSH_FAILED_ALREADY_COMMITTED"
+  | "EMPTY_COMMIT_MESSAGE"
+  | "USER_CANCELLED"
   | "INTERACTION_FAILED"
   | "UNKNOWN_ERROR";
 
@@ -30,6 +38,7 @@ export interface AppErrorInput {
   recoverable: boolean;
   suggestion?: string;
   details?: unknown;
+  cause?: unknown;
 }
 
 export class AppError extends Error {
@@ -40,7 +49,7 @@ export class AppError extends Error {
   readonly details?: unknown;
 
   constructor(input: AppErrorInput) {
-    super(input.message);
+    super(input.message, input.cause === undefined ? undefined : { cause: input.cause });
     this.name = "AppError";
     this.code = input.code;
     this.exitCode = input.exitCode;

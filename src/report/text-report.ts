@@ -1,8 +1,13 @@
 import { Chalk } from "chalk";
+import type { ReportLanguage } from "../config/config-schema.js";
 import type { ReviewFinding, ReviewReport } from "../review/review-schema.js";
+import { collapseToSingleLine, truncate } from "./escape.js";
+import { reportStrings, type ReportStrings } from "./i18n.js";
 
 export interface TextReportOptions {
   color: boolean;
+  reportLanguage?: ReportLanguage;
+  filteredOut?: number;
 }
 
 const forcedColor = new Chalk({ level: 1 });
@@ -13,33 +18,44 @@ function severityLabel(finding: ReviewFinding, color: boolean): string {
   if (finding.severity === "critical") return forcedColor.bold.red(label);
   if (finding.severity === "high") return forcedColor.red(label);
   if (finding.severity === "medium") return forcedColor.yellow(label);
-  return forcedColor.blue(label);
+  return forcedColor.green(label);
+}
+
+function indentMultiline(value: string): string {
+  return value.replace(/\r?\n/g, "\n  ");
 }
 
 export function renderTextReport(report: ReviewReport, options: TextReportOptions): string {
-  const title = options.color ? forcedColor.bold("AI 代码审查报告") : "AI 代码审查报告";
+  const strings = reportStrings(options.reportLanguage);
+  const title = options.color ? forcedColor.bold(strings.title) : strings.title;
   const findings =
     report.findings
-      .map((finding) => {
-        const location = finding.line ? `${finding.file}:${finding.line}` : finding.file;
-        return [
-          `${severityLabel(finding, options.color)} ${finding.title}`,
-          `  ${location}`,
-          `  原因：${finding.reason}`,
-          `  建议：${finding.suggestion}`,
-          finding.learningNote ? `  学习说明：${finding.learningNote}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
-      })
-      .join("\n\n") || "未发现问题。";
+      .map((finding) => renderTextFinding(finding, options.color, strings))
+      .join("\n\n") || strings.noFindings;
+
+  const summaryLine = options.filteredOut && options.filteredOut > 0
+    ? `${report.summary} ${strings.filteredOutHint(options.filteredOut)}`
+    : report.summary;
 
   return [
     title,
-    `状态：${report.status}`,
-    `风险：${report.risk}`,
-    `摘要：${report.summary}`,
+    `${strings.statusLabel}：${report.status}`,
+    `${strings.riskLabel}：${report.risk}`,
+    `${strings.summaryLabel}：${summaryLine}`,
     "",
     findings,
   ].join("\n");
+}
+
+function renderTextFinding(finding: ReviewFinding, color: boolean, strings: ReportStrings): string {
+  const location = finding.line ? `${finding.file}:${finding.line}` : finding.file;
+  return [
+    `${severityLabel(finding, color)} ${collapseToSingleLine(finding.title)}`,
+    `  ${location}`,
+    `  ${strings.reasonLabel}：${indentMultiline(truncate(finding.reason))}`,
+    `  ${strings.suggestionLabel}：${indentMultiline(truncate(finding.suggestion))}`,
+    finding.learningNote ? `  ${strings.learningNoteLabel}：${indentMultiline(truncate(finding.learningNote))}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

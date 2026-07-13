@@ -93,7 +93,7 @@ describe("runPushCommand", () => {
       },
     );
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(0);
     expect(result.output).toContain("已取消");
     expect(commitStagedChanges).not.toHaveBeenCalled();
     expect(pushCurrentBranch).not.toHaveBeenCalled();
@@ -187,6 +187,49 @@ describe("runPushCommand", () => {
     expect(confirmRisk).not.toHaveBeenCalled();
     expect(commitStagedChanges).not.toHaveBeenCalled();
     expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
+  test("returns USER_CANCELLED with exit code 0 when staging confirmation is rejected", async () => {
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockRejectedValue(
+          new AppError({
+            code: "NO_DIFF",
+            message: "没有发现可审查的 diff。",
+            exitCode: 0,
+            recoverable: false,
+          }),
+        ),
+        hasUnstagedChanges: vi.fn().mockResolvedValue(true),
+        confirmStageChanges: vi.fn().mockResolvedValue(false),
+        stageAllChanges: vi.fn(),
+        commitStagedChanges: vi.fn(),
+        pushCurrentBranch: vi.fn(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("已取消");
+  });
+
+  test("returns USER_CANCELLED with exit code 0 when risk confirmation is rejected", async () => {
+    const commitStagedChanges = vi.fn();
+
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider: providerReturning(failReport(), "fix: x"),
+        confirmRisk: vi.fn().mockResolvedValue(false),
+        commitStagedChanges,
+        pushCurrentBranch: vi.fn(),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("已取消");
+    expect(commitStagedChanges).not.toHaveBeenCalled();
   });
 
   test("returns an error when stage confirmation fails with a non-cancellation error", async () => {
@@ -418,25 +461,6 @@ describe("runPushCommand", () => {
     expect(commitStagedChanges).toHaveBeenCalledWith({ message: "feat: 使用编辑后的中文提交信息" });
   });
 
-  test("does not commit when risk confirmation is rejected", async () => {
-    const commitStagedChanges = vi.fn();
-
-    const result = await runPushCommand(
-      {},
-      {
-        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
-        provider: providerReturning(failReport(), "fix: x"),
-        confirmRisk: vi.fn().mockResolvedValue(false),
-        commitStagedChanges,
-        pushCurrentBranch: vi.fn(),
-      },
-    );
-
-    expect(result.exitCode).toBe(1);
-    expect(result.output).toContain("已取消");
-    expect(commitStagedChanges).not.toHaveBeenCalled();
-  });
-
   test("blocks staged push before provider review when diff contains a likely secret", async () => {
     const provider = providerReturning(passReport(), "feat: x");
     const commitStagedChanges = vi.fn();
@@ -488,16 +512,89 @@ describe("runPushCommand", () => {
       {
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider: providerReturning(passReport(), "feat: x"),
-        confirmCommitMessage: vi.fn().mockRejectedValue(new Error("User force closed the prompt")),
+        confirmCommitMessage: vi.fn().mockRejectedValue(
+          Object.assign(new Error("User force closed the prompt"), { name: "ExitPromptError" }),
+        ),
         commitStagedChanges,
         pushCurrentBranch,
       },
     );
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(0);
     expect(result.output).toContain("已取消");
     expect(commitStagedChanges).not.toHaveBeenCalled();
     expect(pushCurrentBranch).not.toHaveBeenCalled();
+  });
+
+  test("throws EMPTY_COMMIT_MESSAGE when commit message resolves to empty string", async () => {
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+
+    const result = await runPushCommand(
+      { message: "   " },
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider: providerReturning(passReport(), "feat: x"),
+        commitStagedChanges,
+        pushCurrentBranch,
+      },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("提交信息为空");
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+  });
+
+  test("throws PUSH_FAILED_ALREADY_COMMITTED with rollback hint when push fails after commit", async () => {
+    const commitStagedChanges = vi.fn().mockResolvedValue(undefined);
+    const pushCurrentBranch = vi.fn().mockRejectedValue(new Error("network down"));
+    const getHeadSha = vi.fn().mockResolvedValue("abcdef1234567890");
+
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider: providerReturning(passReport(), "feat: x"),
+        confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
+        commitStagedChanges,
+        pushCurrentBranch,
+        getHeadSha,
+      },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("已创建");
+    expect(result.output).toContain("push 失败");
+    expect(result.output).toContain("git reset --soft");
+    expect(commitStagedChanges).toHaveBeenCalled();
+  });
+
+  test("propagates PUSH_NO_UPSTREAM without wrapping as already committed", async () => {
+    const commitStagedChanges = vi.fn().mockResolvedValue(undefined);
+    const pushCurrentBranch = vi.fn().mockRejectedValue(
+      new AppError({
+        code: "PUSH_NO_UPSTREAM",
+        message: "no upstream",
+        exitCode: 2,
+        recoverable: false,
+      }),
+    );
+
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider: providerReturning(passReport(), "feat: x"),
+        confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
+        commitStagedChanges,
+        pushCurrentBranch,
+        getHeadSha: vi.fn().mockResolvedValue("abcdef1234567890"),
+      },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("no upstream");
+    expect(result.output).not.toContain("已创建");
   });
 });
 

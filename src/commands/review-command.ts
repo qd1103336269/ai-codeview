@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { AiCodeviewConfig, OutputFormat, Severity } from "../config/config-schema.js";
+import type { AiCodeviewConfig, OutputFormat, ReportLanguage, Severity } from "../config/config-schema.js";
 import { loadConfig } from "../config/load-config.js";
 import { chunkReviewInput } from "../diff/chunk-review-input.js";
 import { filterReviewFiles } from "../diff/filter-review-files.js";
@@ -12,11 +12,12 @@ import type { PathReviewFile } from "../input/path-input.js";
 import type { AiProvider } from "../providers/ai-provider.js";
 import { DeepSeekProvider } from "../providers/deepseek-provider.js";
 import { resolveExitCode } from "../report/exit-code.js";
+import { filterByConfidence } from "../report/filter-by-confidence.js";
 import { renderJsonReport } from "../report/json-report.js";
 import { renderMarkdownReport } from "../report/markdown-report.js";
 import { renderSummaryReport } from "../report/summary-report.js";
 import { renderTextReport } from "../report/text-report.js";
-import { reviewChunks } from "../review/review-orchestrator.js";
+import { reviewChunks, type ReviewChunksResult } from "../review/review-orchestrator.js";
 import type { ReviewReport } from "../review/review-schema.js";
 import { detectSecretsInDiffFiles, detectSecretsInTextFiles } from "../security/detect-secrets.js";
 
@@ -29,8 +30,10 @@ export interface ReviewCommandOptions {
   format?: OutputFormat;
   failOn?: Severity;
   output?: string;
+  noOutputFile?: boolean;
   color?: boolean;
   allowSecrets?: boolean;
+  allowExternalPath?: boolean;
 }
 
 export interface ReviewCommandDeps {
@@ -74,7 +77,7 @@ export async function runReviewCommand(
         recoverable: false,
       });
     }
-    const outputOverride = options.output ?? (options.format ? null : undefined);
+    const outputOverride = options.output;
     const config = await loadConfig({
       cwd,
       overrides: {
@@ -82,6 +85,7 @@ export async function runReviewCommand(
         format: options.format,
         output: outputOverride,
         allowSecrets: options.allowSecrets,
+        noOutputFile: options.noOutputFile,
       },
     });
     const pathMode = Boolean(options.path?.length);
@@ -90,7 +94,13 @@ export async function runReviewCommand(
     if (pathMode) {
       progress("校验输入路径...");
       progress("读取代码文件...");
-      pathFiles = await collectPathReviewFiles({ paths: options.path ?? [], ignore: config.ignore, cwd });
+      pathFiles = await collectPathReviewFiles({
+        paths: options.path ?? [],
+        ignore: config.ignore,
+        cwd,
+        allowExternalPath: options.allowExternalPath ?? config.input.allowExternalPath,
+        maxFileBytes: config.input.maxFileBytes,
+      });
       parsed = pathFiles;
     } else {
       progress("收集 Git diff...");
@@ -119,6 +129,8 @@ export async function runReviewCommand(
             chunks,
             provider,
             reportLanguage: config.reportLanguage,
+            learningNotes: config.review.learningNotes,
+            continueOnError: config.review.continueOnError,
             onChunkStart: (_chunk, index, total) => {
               progress(`调用 DeepSeek 审查分块 ${index}/${total}...`);
             },
@@ -128,8 +140,9 @@ export async function runReviewCommand(
           })
         : emptyReport();
     progress("生成审查报告...");
-    const exitCode = resolveExitCode(report, config.failOn, config.confidenceFloor);
-    const rendered = renderReport(report, config.output.format, options.color ?? false, options.summary ?? false);
+    const { report: visibleReport, filteredOut } = filterByConfidence(report, config.confidenceFloor);
+    const exitCode = resolveExitCode(visibleReport, config.failOn, config.confidenceFloor);
+    const rendered = renderReport(visibleReport, config.output.format, options.color ?? false, options.summary ?? false, config.reportLanguage, filteredOut);
 
     if (config.output.file) {
       const outputPath = resolve(cwd, config.output.file);
@@ -220,14 +233,23 @@ function createDeepSeekProvider(config: AiCodeviewConfig, env: NodeJS.ProcessEnv
     model: config.model,
     thinking: config.thinking,
     reasoningEffort: config.reasoningEffort,
+    timeoutMs: config.timeoutMs,
+    maxRetries: config.maxRetries,
   });
 }
 
-function renderReport(report: ReviewReport, format: OutputFormat, color: boolean, summary: boolean): string {
-  if (summary) return renderSummaryReport(report);
+function renderReport(
+  report: ReviewReport,
+  format: OutputFormat,
+  color: boolean,
+  summary: boolean,
+  reportLanguage: ReportLanguage,
+  filteredOut: number,
+): string {
+  if (summary) return renderSummaryReport(report, { reportLanguage, filteredOut });
   if (format === "json") return renderJsonReport(report);
-  if (format === "markdown") return renderMarkdownReport(report);
-  return renderTextReport(report, { color });
+  if (format === "markdown") return renderMarkdownReport(report, { reportLanguage, filteredOut });
+  return renderTextReport(report, { color, reportLanguage, filteredOut });
 }
 
 function renderError(error: AppError, format: OutputFormat): string {
@@ -259,13 +281,14 @@ function getGitDiffInput(options: ReviewCommandOptions) {
   return { mode: options.staged ? ("staged" as const) : ("working-tree" as const) };
 }
 
-function emptyReport(): ReviewReport {
+function emptyReport(): ReviewChunksResult {
   return {
     risk: "low" as const,
     status: "pass" as const,
     summary: "过滤后没有可审查的文件。",
     findingCounts: { critical: 0, high: 0, medium: 0, low: 0 },
     findings: [],
+    chunkErrors: [],
   };
 }
 

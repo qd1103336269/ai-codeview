@@ -22,9 +22,10 @@ describe("collectPathReviewFiles", () => {
   });
 
   test("rejects missing absolute paths", async () => {
-    const missing = resolve(tmpdir(), `missing-${randomUUID()}.ts`);
+    const root = await makeTempDir();
+    const missing = join(root, `missing-${randomUUID()}.ts`);
 
-    await expect(collectPathReviewFiles({ paths: [missing], ignore: [] })).rejects.toMatchObject({
+    await expect(collectPathReviewFiles({ paths: [missing], ignore: [], cwd: root })).rejects.toMatchObject({
       code: "PATH_NOT_FOUND",
       exitCode: 2,
     });
@@ -81,6 +82,103 @@ describe("collectPathReviewFiles", () => {
       raw: "",
       content: "",
     });
+  });
+
+  test("throws PATH_OUTSIDE_CWD when path points to cwd parent", async () => {
+    const root = await makeTempDir();
+    const sibling = await makeTempDir();
+    const outside = resolve(sibling, "secret.txt");
+    await writeFile(outside, "private", "utf8");
+
+    await expect(
+      collectPathReviewFiles({ paths: [outside], ignore: [], cwd: root }),
+    ).rejects.toMatchObject({ code: "PATH_OUTSIDE_CWD", exitCode: 2 });
+  });
+
+  test("rejects UNC-style path", async () => {
+    await expect(
+      collectPathReviewFiles({ paths: ["\\\\server\\share\\file.txt"], ignore: [] }),
+    ).rejects.toMatchObject({ code: "PATH_OUTSIDE_CWD" });
+  });
+
+  test("allows external path when allowExternalPath=true", async () => {
+    const root = await makeTempDir();
+    const outside = await makeTempDir();
+    const file = join(outside, "external.ts");
+    await writeFile(file, "export const z = 1;\n", "utf8");
+
+    const result = await collectPathReviewFiles({
+      paths: [file],
+      ignore: [],
+      cwd: root,
+      allowExternalPath: true,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.content).toContain("export const z = 1;");
+  });
+
+  test("skips file larger than maxFileBytes as binary", async () => {
+    const root = await makeTempDir();
+    const file = join(root, "big.log");
+    await writeFile(file, "x".repeat(2000));
+
+    const result = await collectPathReviewFiles({
+      paths: [file],
+      ignore: [],
+      cwd: root,
+      maxFileBytes: 1024,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.binary).toBe(true);
+    expect(result[0]?.content).toBe("");
+  });
+
+  test("reads file equal to maxFileBytes", async () => {
+    const root = await makeTempDir();
+    const file = join(root, "ok.txt");
+    await writeFile(file, "y".repeat(512));
+
+    const result = await collectPathReviewFiles({
+      paths: [file],
+      ignore: [],
+      cwd: root,
+      maxFileBytes: 512,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.binary).toBe(false);
+    expect(result[0]?.content?.length).toBe(512);
+  });
+
+  test("prunes ignored directories during recursion", async () => {
+    const root = await makeTempDir();
+    await mkdir(join(root, "node_modules", "dep"), { recursive: true });
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "node_modules", "dep", "index.js"), "module.exports = 1;\n");
+    await writeFile(join(root, "node_modules", "dep", "deep.js"), "module.exports = 2;\n");
+    await writeFile(join(root, "src", "app.ts"), "export const a = 1;\n");
+
+    const result = await collectPathReviewFiles({
+      paths: [root],
+      ignore: ["node_modules/**"],
+      cwd: root,
+    });
+
+    expect(result.map((f) => f.path)).toEqual(["src/app.ts"]);
+  });
+
+  test("always skips .git directory even when ignore is empty", async () => {
+    const root = await makeTempDir();
+    await mkdir(join(root, ".git"), { recursive: true });
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(root, "src", "a.ts"), "export const a = 1;\n");
+
+    const result = await collectPathReviewFiles({ paths: [root], ignore: [], cwd: root });
+
+    expect(result.map((f) => f.path)).toEqual(["src/a.ts"]);
   });
 });
 

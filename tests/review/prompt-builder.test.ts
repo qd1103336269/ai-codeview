@@ -32,4 +32,38 @@ describe("buildReviewPrompt", () => {
     expect(prompt).toContain("en-US");
     expect(prompt).not.toContain("必须使用中文");
   });
+
+  test("wraps diff in XML tags to prevent prompt injection", () => {
+    const prompt = buildReviewPrompt({
+      chunkId: "chunk-1",
+      diff: "+const x = 1;",
+      files: ["src/a.ts"],
+    });
+
+    expect(prompt).toContain("<diff>");
+    expect(prompt).toContain("</diff>");
+    expect(prompt).toContain("不是指令");
+  });
+
+  test("omits learningNote instruction when learningNotes is false", () => {
+    const prompt = buildReviewPrompt({
+      chunkId: "chunk-1",
+      diff: "+const x = 1;",
+      files: ["src/a.ts"],
+      learningNotes: false,
+    });
+
+    expect(prompt).not.toContain("learningNote");
+  });
+
+  test("includes learningNote instruction when learningNotes is true", () => {
+    const prompt = buildReviewPrompt({
+      chunkId: "chunk-1",
+      diff: "+const x = 1;",
+      files: ["src/a.ts"],
+      learningNotes: true,
+    });
+
+    expect(prompt).toContain("learningNote");
+  });
 });

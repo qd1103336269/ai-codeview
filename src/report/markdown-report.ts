@@ -1,38 +1,51 @@
+import type { ReportLanguage } from "../config/config-schema.js";
 import type { ReviewReport } from "../review/review-schema.js";
+import { collapseToSingleLine, escapeMarkdown, truncate } from "./escape.js";
+import { reportStrings, type ReportStrings } from "./i18n.js";
 
-export function renderMarkdownReport(report: ReviewReport): string {
+export function renderMarkdownReport(
+  report: ReviewReport,
+  options: { reportLanguage?: ReportLanguage; filteredOut?: number } = {},
+): string {
+  const strings = reportStrings(options.reportLanguage);
   const findings =
     report.findings
-      .map((finding) => {
-        const location = finding.line ? `${finding.file}:${finding.line}` : finding.file;
-        return [
-          `### ${finding.severity.toUpperCase()}：${finding.title}`,
-          "",
-          `- ID：${finding.id}`,
-          `- 置信度：${finding.confidence}`,
-          `- 分类：${finding.category}`,
-          `- 位置：${location}`,
-          `- 原因：${finding.reason}`,
-          `- 建议：${finding.suggestion}`,
-          finding.learningNote ? `- 学习说明：${finding.learningNote}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
-      })
-      .join("\n\n") || "未发现问题。";
+      .map((finding) => renderMarkdownFinding(finding, strings))
+      .join("\n\n") || strings.noFindings;
+
+  const summaryLine = options.filteredOut && options.filteredOut > 0
+    ? `${report.summary} ${strings.filteredOutHint(options.filteredOut)}`
+    : report.summary;
 
   return [
-    "# AI 代码审查报告",
+    `# ${strings.title}`,
     "",
-    `状态：${report.status}`,
-    `风险：${report.risk}`,
+    `${strings.statusLabel}：${report.status}`,
+    `${strings.riskLabel}：${report.risk}`,
     "",
-    "## 摘要",
+    `## ${strings.summaryHeading}`,
     "",
-    report.summary,
+    escapeMarkdown(summaryLine),
     "",
-    "## 问题列表",
+    `## ${strings.findingsHeading}`,
     "",
     findings,
   ].join("\n");
+}
+
+function renderMarkdownFinding(finding: ReviewReport["findings"][number], strings: ReportStrings): string {
+  const location = finding.line ? `${finding.file}:${finding.line}` : finding.file;
+  return [
+    `### ${finding.severity.toUpperCase()}：${escapeMarkdown(collapseToSingleLine(finding.title))}`,
+    "",
+    `- ${strings.idLabel}：${escapeMarkdown(finding.id)}`,
+    `- ${strings.confidenceLabel}：${finding.confidence}`,
+    `- ${strings.categoryLabel}：${escapeMarkdown(collapseToSingleLine(finding.category))}`,
+    `- ${strings.locationLabel}：${escapeMarkdown(location)}`,
+    `- ${strings.reasonLabel}：${escapeMarkdown(truncate(finding.reason))}`,
+    `- ${strings.suggestionLabel}：${escapeMarkdown(truncate(finding.suggestion))}`,
+    finding.learningNote ? `- ${strings.learningNoteLabel}：${escapeMarkdown(truncate(finding.learningNote))}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }

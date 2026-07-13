@@ -24,7 +24,7 @@ describe("config loading", () => {
   });
 
   test("rejects invalid severity threshold", () => {
-    expect(() => loadConfigFromObject({ failOn: "urgent" })).toThrow("Invalid configuration");
+    expect(() => loadConfigFromObject({ failOn: "urgent" })).toThrow("配置无效");
   });
 
   test("accepts official DeepSeek max reasoning effort", () => {
@@ -34,7 +34,7 @@ describe("config loading", () => {
   });
 
   test("rejects unsupported DeepSeek reasoning effort values", () => {
-    expect(() => loadConfigFromObject({ reasoningEffort: "medium" })).toThrow("Invalid configuration");
+    expect(() => loadConfigFromObject({ reasoningEffort: "medium" })).toThrow("配置无效");
   });
 
   test("accepts supported report languages", () => {
@@ -43,7 +43,7 @@ describe("config loading", () => {
   });
 
   test("rejects unsupported report language values", () => {
-    expect(() => loadConfigFromObject({ reportLanguage: "fr-FR" })).toThrow("Invalid configuration");
+    expect(() => loadConfigFromObject({ reportLanguage: "fr-FR" })).toThrow("配置无效");
   });
 
   test("CLI flags override object config", () => {
@@ -99,6 +99,64 @@ describe("config loading", () => {
     expect(config.output.format).toBe("json");
     expect(config.output.file).toBe("ci-report.json");
     expect(config.security.allowSecrets).toBe(true);
+  });
+
+  test("rejects unknown top-level key as strict schema", () => {
+    expect(() => loadConfigFromObject({ failon: "high" })).toThrow("配置无效");
+  });
+
+  test("lists all invalid fields in a single error", () => {
+    let caught: unknown;
+    try {
+      loadConfigFromObject({ failOn: "urgent", baseUrl: "not-a-url", reportLanguage: "fr-FR" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "INVALID_CONFIG" });
+    const message = (caught as { message: string }).message;
+    expect(message).toContain("failOn");
+    expect(message).toContain("baseUrl");
+    expect(message).toContain("reportLanguage");
+  });
+
+  test("gives friendly error on corrupted JSON config file", async () => {
+    const cwd = await makeTempDir();
+    await writeFile(join(cwd, ".ai-codeview.json"), "{not json");
+
+    await expect(loadConfig({ cwd })).rejects.toMatchObject({
+      code: "INVALID_CONFIG",
+      exitCode: 2,
+    });
+  });
+
+  test("does not leak secret-like value in zod issue details", () => {
+    let caught: unknown;
+    try {
+      loadConfigFromObject({ failOn: "sk-1234567890abcdef1234567890abcdef" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({ code: "INVALID_CONFIG" });
+    const message = (caught as { message: string }).message;
+    expect(message).not.toContain("sk-1234567890abcdef1234567890abcdef");
+    const details = (caught as { details: unknown }).details;
+    const text = JSON.stringify(details);
+    expect(text).not.toContain("sk-1234567890abcdef1234567890abcdef");
+  });
+
+  test("exposes runtime tuning defaults", () => {
+    const config = loadConfigFromObject({});
+    expect(config.timeoutMs).toBe(60_000);
+    expect(config.maxRetries).toBe(2);
+    expect(config.input.maxFileBytes).toBe(1_048_576);
+    expect(config.input.allowExternalPath).toBe(false);
+    expect(config.review.continueOnError).toBe(true);
+  });
+
+  test("default ignore list prunes node_modules and .git", () => {
+    const config = loadConfigFromObject({});
+    expect(config.ignore).toContain("node_modules/**");
+    expect(config.ignore).toContain(".git/**");
   });
 });
 

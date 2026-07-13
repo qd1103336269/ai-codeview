@@ -1,6 +1,15 @@
 import type { ReviewFileDiff } from "../diff/parse-git-diff.js";
 
-export type SecretFindingType = "aws-access-key" | "api-key-assignment" | "private-key";
+export type SecretFindingType =
+  | "aws-access-key"
+  | "api-key-assignment"
+  | "private-key"
+  | "github-pat"
+  | "gitlab-pat"
+  | "slack-token"
+  | "google-api-key"
+  | "stripe-key"
+  | "jwt";
 
 export interface SecretFinding {
   type: SecretFindingType;
@@ -14,19 +23,58 @@ export interface ReviewTextFile {
   content: string;
 }
 
-const secretRules: Array<{ type: SecretFindingType; pattern: RegExp }> = [
+interface SecretRule {
+  type: SecretFindingType;
+  pattern: RegExp;
+  redact: RegExp;
+}
+
+const secretRules: SecretRule[] = [
   {
     type: "private-key",
     pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+    redact: /-----BEGIN [A-Z ]*PRIVATE KEY-----/g,
   },
   {
     type: "aws-access-key",
     pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
+    redact: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+  },
+  {
+    type: "github-pat",
+    pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/,
+    redact: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g,
+  },
+  {
+    type: "gitlab-pat",
+    pattern: /\bglpat-[A-Za-z0-9_-]{20,}\b/,
+    redact: /\bglpat-[A-Za-z0-9_-]{20,}\b/g,
+  },
+  {
+    type: "slack-token",
+    pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
+    redact: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+  },
+  {
+    type: "google-api-key",
+    pattern: /\bAIza[0-9A-Za-z_-]{35}\b/,
+    redact: /\bAIza[0-9A-Za-z_-]{35}\b/g,
+  },
+  {
+    type: "stripe-key",
+    pattern: /\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{24,}\b/,
+    redact: /\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{24,}\b/g,
+  },
+  {
+    type: "jwt",
+    pattern: /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/,
+    redact: /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
   },
   {
     type: "api-key-assignment",
     pattern:
-      /(?:api[_-]?key|apikey|token|secret|password)\b\s*[:=]\s*["']?(?:sk-[A-Za-z0-9_-]{16,}|[A-Za-z0-9_-]{24,})/i,
+      /(?:api[_-]?key|apikey|token|secret|password|signingkey|privatekey|jwt[_-]?secret)\b\s*[:=]\s*["']?(?:sk-[A-Za-z0-9_-]{16,}|[A-Za-z0-9_-]{24,})/i,
+    redact: /(?:api[_-]?key|apikey|token|secret|password|signingkey|privatekey|jwt[_-]?secret)\b\s*[:=]\s*["']?(?:sk-[A-Za-z0-9_-]{16,}|[A-Za-z0-9_-]{24,})/gi,
   },
 ];
 
@@ -85,7 +133,7 @@ function detectSecretsInFile(file: ReviewFileDiff): SecretFinding[] {
       continue;
     }
 
-    if (!rawLine.startsWith("-") && currentNewLine !== undefined) {
+    if (!rawLine.startsWith("-") && !rawLine.startsWith("\\") && currentNewLine !== undefined) {
       currentNewLine += 1;
     }
   }
@@ -94,9 +142,5 @@ function detectSecretsInFile(file: ReviewFileDiff): SecretFinding[] {
 }
 
 function redactSecretLine(line: string): string {
-  return line
-    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "<redacted>")
-    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "sk-<redacted>")
-    .replace(/(["']?)([A-Za-z0-9_-]{24,})(["']?)/g, "$1<redacted>$3")
-    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----/g, "-----BEGIN <redacted>-----");
+  return secretRules.reduce((acc, rule) => acc.replace(rule.redact, "<redacted>"), line);
 }

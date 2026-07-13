@@ -25,6 +25,7 @@ describe("DeepSeekProvider", () => {
       baseUrl: "https://api.deepseek.com",
       model: "deepseek-v4-pro",
       createChatCompletion: create,
+      sleep: noopSleep,
     });
 
     const result = await provider.review({ prompt: "review this" });
@@ -38,6 +39,7 @@ describe("DeepSeekProvider", () => {
         reasoning_effort: "high",
         response_format: { type: "json_object" },
         stream: false,
+        signal: expect.any(AbortSignal),
       }),
     );
   });
@@ -51,6 +53,7 @@ describe("DeepSeekProvider", () => {
       thinking: false,
       reasoningEffort: "max",
       createChatCompletion: create,
+      sleep: noopSleep,
     });
 
     await provider.review({ prompt: "review this" });
@@ -180,15 +183,89 @@ describe("DeepSeekProvider", () => {
       }),
     );
   });
+
+  test("retries with exponential backoff on 429", async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(apiError(429))
+      .mockRejectedValueOnce(apiError(429))
+      .mockResolvedValueOnce(completion(JSON.stringify(validReport({ summary: "Recovered after backoff." }))));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const provider = createProvider(create, { sleep });
+
+    const result = await provider.review({ prompt: "review this" });
+
+    expect(result.summary).toBe("Recovered after backoff.");
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep.mock.calls[0][0]).toBeGreaterThanOrEqual(1000);
+    expect(sleep.mock.calls[1][0]).toBeGreaterThanOrEqual(2000);
+  });
+
+  test("respects Retry-After header on 429", async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValueOnce(apiError(429, { "retry-after": "2" }))
+      .mockResolvedValueOnce(completion(JSON.stringify(validReport({ summary: "Recovered." }))));
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const provider = createProvider(create, { sleep });
+
+    await provider.review({ prompt: "review this" });
+
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep.mock.calls[0][0]).toBe(2000);
+  });
+
+  test("maps AbortError to PROVIDER_TIMEOUT and retries", async () => {
+    const create = vi.fn().mockRejectedValue(
+      Object.assign(new Error("aborted"), { name: "AbortError" }),
+    );
+    const provider = createProvider(create);
+
+    await expect(provider.review({ prompt: "review this" })).rejects.toMatchObject({
+      code: "PROVIDER_TIMEOUT",
+    });
+    expect(create).toHaveBeenCalledTimes(3);
+  });
+
+  test("sanitized error excludes Authorization header from details", async () => {
+    const error = Object.assign(new Error("boom"), {
+      status: 500,
+      headers: { authorization: "Bearer sk-supersecret" },
+      request: { url: "https://api.deepseek.com" },
+    });
+    const create = vi.fn().mockRejectedValue(error);
+    const provider = createProvider(create);
+
+    let caught: unknown;
+    try {
+      await provider.review({ prompt: "review this" });
+    } catch (e) {
+      caught = e;
+    }
+    const details = (caught as { details?: unknown }).details;
+    const text = JSON.stringify(details);
+    expect(text).not.toContain("sk-supersecret");
+    expect(text).not.toContain("authorization");
+    expect(text).not.toContain("api.deepseek.com");
+    expect(text).toContain("500");
+  });
 });
 
-function createProvider(createChatCompletion: CreateChatCompletion) {
+function createProvider(
+  createChatCompletion: CreateChatCompletion,
+  overrides: { sleep?: (ms: number) => Promise<void> } = {},
+) {
   return new DeepSeekProvider({
     apiKey: "test-key",
     baseUrl: "https://api.deepseek.com",
     model: "deepseek-v4-pro",
     createChatCompletion,
+    sleep: overrides.sleep ?? noopSleep,
   });
+}
+
+function noopSleep(): Promise<void> {
+  return Promise.resolve();
 }
 
 function completion(content: string) {
@@ -214,6 +291,6 @@ function validReport(overrides: Partial<ReviewReport> = {}): ReviewReport {
   };
 }
 
-function apiError(status: number): Error & { status: number } {
-  return Object.assign(new Error(`HTTP ${status}`), { status });
+function apiError(status: number, headers: Record<string, string> = {}): Error & { status: number; headers: Record<string, string> } {
+  return Object.assign(new Error(`HTTP ${status}`), { status, headers });
 }

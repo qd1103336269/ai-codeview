@@ -53,12 +53,58 @@ describe("report renderers", () => {
   test("renders compact summary without detailed reason and suggestion", () => {
     const output = renderSummaryReport(report);
 
-    expect(output).toContain("AI Codeview Summary");
-    expect(output).toContain("risk: high");
+    expect(output).toContain("AI 代码审查报告");
+    expect(output).toContain("风险: high");
     expect(output).toContain("ACV-0001");
     expect(output).toContain("src/auth.ts:12");
     expect(output).toContain(report.findings[0]?.title);
     expect(output).not.toContain(report.findings[0]?.reason);
     expect(output).not.toContain(report.findings[0]?.suggestion);
+  });
+
+  test("renders Markdown with English headings when reportLanguage is en-US", () => {
+    const output = renderMarkdownReport(report, { reportLanguage: "en-US" });
+
+    expect(output).toContain("# AI Code Review Report");
+    expect(output).toContain("## Summary");
+    expect(output).toContain("## Findings");
+  });
+
+  test("escapes Markdown metacharacters in finding title", () => {
+    const reportWithSharp: ReviewReport = {
+      ...report,
+      findings: [
+        {
+          ...report.findings[0],
+          title: "标题含 # 与 * 与 `",
+        },
+      ],
+    };
+    const output = renderMarkdownReport(reportWithSharp);
+
+    expect(output).toContain("\\#");
+    expect(output).toContain("\\*");
+    expect(output).toContain("\\`");
+  });
+
+  test("collapses title newlines to a single line in summary", () => {
+    const reportWithNewline: ReviewReport = {
+      ...report,
+      findings: [
+        {
+          ...report.findings[0],
+          title: "第一行\n第二行",
+        },
+      ],
+    };
+    const output = renderSummaryReport(reportWithNewline);
+
+    expect(output).toContain("第一行 第二行");
+  });
+
+  test("appends filtered-out hint when filteredOut > 0", () => {
+    const output = renderMarkdownReport(report, { filteredOut: 3 });
+
+    expect(output).toContain("已过滤 3 条低置信度 finding");
   });
 });
