@@ -15,6 +15,17 @@ ai-codeview review --staged
 acv review --staged
 ```
 
+## 命令概览
+
+| 命令 | 作用 | 常用场景 |
+| --- | --- | --- |
+| `acv review` | 审查 Git diff 或指定路径的代码，输出中文审查报告 | 提交前快速审查本地变更 |
+| `acv push` | 审查已暂存代码后生成中文提交信息，确认后执行 commit 和 push | 一键完成审查、提交和推送 |
+| `acv doctor` | 检查 Node.js、Git、配置、API Key、remote 等本地环境 | 安装或运行失败时排查问题 |
+| `acv init` | 在当前目录生成默认配置文件 `.ai-codeview.json` | 首次使用时初始化项目配置 |
+| `acv config` | 打印合并 CLI 参数和配置文件后的最终生效配置 | 确认配置是否正确加载 |
+| `acv help` | 显示命令帮助 | 查看任意命令的选项和用法 |
+
 ## 适用场景
 
 AI Codeview 适合在提交前做一次本地 AI 代码审查，帮助你发现明显 bug、安全风险、测试缺口和可维护性问题。
@@ -536,7 +547,7 @@ acv doctor
 
 ## 版本状态
 
-当前版本：`0.4.2`
+当前版本：`1.0.0`
 
 已支持：
 
