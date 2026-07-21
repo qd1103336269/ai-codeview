@@ -1,8 +1,10 @@
 import OpenAI from "openai";
+import type { AiCodeviewConfig } from "../config/config-schema.js";
 import { AppError, isAppError } from "../errors/app-error.js";
 import { sanitizeCommitMessage } from "../review/commit-message.js";
 import { reviewReportSchema, type ReviewReport } from "../review/review-schema.js";
 import type { AiProvider, CommitMessageRequest, ReviewRequest } from "./ai-provider.js";
+import type { ProviderFactory } from "./registry.js";
 
 type ChatCompletionInput = {
   model: string;
@@ -28,7 +30,7 @@ export type CreateChatCompletion = (input: ChatCompletionInput) => Promise<ChatC
 export interface DeepSeekProviderOptions {
   apiKey: string;
   baseUrl: string;
-  model: "deepseek-v4-pro" | "deepseek-v4-flash";
+  model: string;
   thinking?: boolean;
   reasoningEffort?: "high" | "max";
   timeoutMs?: number;
@@ -41,7 +43,7 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_BACKOFF_MS = 30_000;
 
 export class DeepSeekProvider implements AiProvider {
-  private readonly model: DeepSeekProviderOptions["model"];
+  private readonly model: string;
   private readonly thinking: boolean;
   private readonly reasoningEffort: "high" | "max";
   private readonly maxRetries: number;
@@ -97,7 +99,6 @@ export class DeepSeekProvider implements AiProvider {
         code: "AI_RESPONSE_INVALID",
         message: "DeepSeek 返回了空提交信息。",
         exitCode: 2,
-        recoverable: true,
       });
     }
 
@@ -195,7 +196,6 @@ function parseReviewCompletion(completion: ChatCompletionOutput): ReviewReport {
       code: "AI_RESPONSE_INVALID",
       message: "DeepSeek 返回了空响应。",
       exitCode: 2,
-      recoverable: true,
     });
   }
 
@@ -206,7 +206,6 @@ function parseReviewCompletion(completion: ChatCompletionOutput): ReviewReport {
       code: "AI_RESPONSE_INVALID",
       message: "DeepSeek 响应不符合预期的审查 schema。",
       exitCode: 2,
-      recoverable: true,
       details: error,
     });
   }
@@ -227,7 +226,6 @@ function toProviderAppError(error: unknown): AppError {
       code: "PROVIDER_TIMEOUT",
       message: "DeepSeek 请求超时。",
       exitCode: 2,
-      recoverable: true,
       suggestion: "请增大 timeoutMs 配置，或缩小本次审查范围后重试。",
       details: sanitizeError(error),
     });
@@ -239,7 +237,6 @@ function toProviderAppError(error: unknown): AppError {
       code: "PROVIDER_AUTH_FAILED",
       message: "DeepSeek 鉴权失败。",
       exitCode: 2,
-      recoverable: false,
       suggestion: "请检查配置的 DeepSeek API key。",
       details: sanitizeError(error),
     });
@@ -249,7 +246,6 @@ function toProviderAppError(error: unknown): AppError {
       code: "PROVIDER_RATE_LIMITED",
       message: "DeepSeek 请求触发限流。",
       exitCode: 2,
-      recoverable: true,
       suggestion: "请稍后重试，或缩小本次审查范围。",
       details: sanitizeError(error),
     });
@@ -259,7 +255,6 @@ function toProviderAppError(error: unknown): AppError {
       code: "PROVIDER_BAD_REQUEST",
       message: "DeepSeek 拒绝了本次审查请求。",
       exitCode: 2,
-      recoverable: false,
       suggestion: "请检查配置的模型、baseUrl 和 DeepSeek 请求参数。",
       details: sanitizeError(error),
     });
@@ -269,7 +264,6 @@ function toProviderAppError(error: unknown): AppError {
       code: "PROVIDER_UNAVAILABLE",
       message: "DeepSeek 暂时不可用。",
       exitCode: 2,
-      recoverable: true,
       suggestion: "请稍后重试。",
       details: sanitizeError(error),
     });
@@ -279,7 +273,6 @@ function toProviderAppError(error: unknown): AppError {
       code: "PROVIDER_UNAVAILABLE",
       message: "无法连接 DeepSeek。",
       exitCode: 2,
-      recoverable: true,
       suggestion: "请检查网络、DNS、代理或防火墙设置。",
       details: sanitizeError(error),
     });
@@ -289,7 +282,6 @@ function toProviderAppError(error: unknown): AppError {
     code: "PROVIDER_UNAVAILABLE",
     message: "DeepSeek 请求失败。",
     exitCode: 2,
-    recoverable: true,
     details: sanitizeError(error),
   });
 }
@@ -352,3 +344,21 @@ function isNetworkError(error: unknown): boolean {
     ["ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED"].includes(code)
   );
 }
+
+export const deepseekFactory: ProviderFactory = {
+  create(config: AiCodeviewConfig, apiKey: string): AiProvider {
+    const opts = (config.providerOptions ?? {}) as {
+      thinking?: boolean;
+      reasoningEffort?: "high" | "max";
+    };
+    return new DeepSeekProvider({
+      apiKey,
+      baseUrl: config.baseUrl,
+      model: config.model,
+      thinking: opts.thinking ?? true,
+      reasoningEffort: opts.reasoningEffort ?? "high",
+      timeoutMs: config.timeoutMs,
+      maxRetries: config.maxRetries,
+    });
+  },
+};

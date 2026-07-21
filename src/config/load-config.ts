@@ -54,7 +54,6 @@ export function loadConfigFromObject(value: unknown): AiCodeviewConfig {
         code: "INVALID_CONFIG",
         message: formatIssues(issues),
         exitCode: 2,
-        recoverable: false,
         details: issues,
       });
     }
@@ -98,7 +97,6 @@ export async function loadConfig(input: LoadConfigInput = {}): Promise<AiCodevie
       code: "INVALID_CONFIG",
       message: `配置文件解析失败：${reason}`,
       exitCode: 2,
-      recoverable: false,
       cause: error,
     });
   }

@@ -11,14 +11,13 @@ export type ReportLanguage = z.infer<typeof reportLanguageSchema>;
 
 export const aiCodeviewConfigSchema = z
   .object({
-    provider: z.literal("deepseek").default("deepseek"),
-    model: z.enum(["deepseek-v4-pro", "deepseek-v4-flash"]).default("deepseek-v4-pro"),
+    provider: z.enum(["deepseek", "openai"]).default("deepseek"),
+    model: z.string().min(1).default("deepseek-v4-pro"),
     baseUrl: z.string().url().default("https://api.deepseek.com"),
     apiKeyEnv: z.string().min(1).default("DEEPSEEK_API_KEY"),
-    thinking: z.boolean().default(true),
-    reasoningEffort: z.enum(["high", "max"]).default("high"),
     timeoutMs: z.number().int().positive().default(60_000),
     maxRetries: z.number().int().nonnegative().default(2),
+    providerOptions: z.record(z.unknown()).default({}),
     reportLanguage: reportLanguageSchema.default("zh-CN"),
     failOn: severitySchema.default("high"),
     confidenceFloor: z.enum(["high", "medium", "low"]).default("medium"),

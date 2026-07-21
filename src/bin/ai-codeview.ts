@@ -11,7 +11,6 @@ process.on("unhandledRejection", (error) => {
     code: "UNKNOWN_ERROR",
     message: error instanceof Error ? error.message : "工具运行时发生未知错误。",
     exitCode: 2,
-    recoverable: false,
     cause: error,
   });
   process.stderr.write(`${appError.message}\n`);
@@ -29,7 +28,6 @@ try {
       code: "UNKNOWN_ERROR",
       message: error instanceof Error ? error.message : "工具运行时发生未知错误。",
       exitCode: 2,
-      recoverable: false,
       cause: error,
     });
     process.stderr.write(`${appError.message}\n`);

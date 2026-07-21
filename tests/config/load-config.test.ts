@@ -14,27 +14,35 @@ describe("config loading", () => {
     expect(config.baseUrl).toBe("https://api.deepseek.com");
     expect(config.failOn).toBe("high");
     expect(config.apiKeyEnv).toBe("DEEPSEEK_API_KEY");
-    expect(config.thinking).toBe(true);
-    expect(config.reasoningEffort).toBe("high");
     expect(config.reportLanguage).toBe("zh-CN");
     expect(config.review.security).toBe(true);
     expect(config.security.allowSecrets).toBe(false);
     expect(config.output.format).toBe("markdown");
     expect(config.output.file).toBeNull();
+    expect(config.providerOptions).toEqual({});
   });
 
   test("rejects invalid severity threshold", () => {
     expect(() => loadConfigFromObject({ failOn: "urgent" })).toThrow("配置无效");
   });
 
-  test("accepts official DeepSeek max reasoning effort", () => {
-    const config = loadConfigFromObject({ reasoningEffort: "max" });
+  test("accepts providerOptions for DeepSeek thinking config", () => {
+    const config = loadConfigFromObject({
+      providerOptions: { thinking: false, reasoningEffort: "max" },
+    });
 
-    expect(config.reasoningEffort).toBe("max");
+    expect(config.providerOptions).toEqual({ thinking: false, reasoningEffort: "max" });
   });
 
-  test("rejects unsupported DeepSeek reasoning effort values", () => {
-    expect(() => loadConfigFromObject({ reasoningEffort: "medium" })).toThrow("配置无效");
+  test("rejects unsupported provider", () => {
+    expect(() => loadConfigFromObject({ provider: "claude" })).toThrow("配置无效");
+  });
+
+  test("accepts openai as provider", () => {
+    const config = loadConfigFromObject({ provider: "openai", model: "gpt-4o" });
+
+    expect(config.provider).toBe("openai");
+    expect(config.model).toBe("gpt-4o");
   });
 
   test("accepts supported report languages", () => {

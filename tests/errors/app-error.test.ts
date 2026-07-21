@@ -7,7 +7,6 @@ describe("AppError", () => {
       code: "MISSING_API_KEY",
       message: "缺少 DEEPSEEK_API_KEY",
       exitCode: 2,
-      recoverable: false,
       suggestion: "请先设置 DEEPSEEK_API_KEY，再运行 review。",
     });
 

@@ -37,7 +37,6 @@ export async function collectPathReviewFiles(input: CollectPathReviewFilesInput)
         code: "PATH_NOT_FOUND",
         message: `路径不存在：${path}`,
         exitCode: 2,
-        recoverable: false,
       });
     }
 
@@ -105,7 +104,6 @@ function assertNotUncPath(path: string): void {
       code: "PATH_OUTSIDE_CWD",
       message: `不允许使用 UNC 路径：${path}`,
       exitCode: 2,
-      recoverable: false,
       suggestion: "请使用相对路径或在当前工作目录内的绝对路径。",
     });
   }
@@ -122,7 +120,6 @@ function assertWithinCwd(cwd: string, absolutePath: string, allowExternal: boole
       code: "PATH_OUTSIDE_CWD",
       message: `路径超出当前工作目录：${original}`,
       exitCode: 2,
-      recoverable: false,
       suggestion: "在当前工作目录内指定路径；如需审查外部路径，请使用 --allow-external-path。",
     });
   }

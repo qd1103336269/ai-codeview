@@ -1,5 +1,4 @@
 export type AppErrorCode =
-  | "NOT_GIT_REPOSITORY"
   | "GIT_NOT_FOUND"
   | "NO_DIFF"
   | "INVALID_CONFIG"
@@ -15,7 +14,6 @@ export type AppErrorCode =
   | "PROVIDER_RATE_LIMITED"
   | "PROVIDER_UNAVAILABLE"
   | "PROVIDER_TIMEOUT"
-  | "DIFF_TOO_LARGE"
   | "AI_RESPONSE_INVALID"
   | "OUTPUT_WRITE_FAILED"
   | "GIT_ADD_FAILED"
@@ -35,7 +33,6 @@ export interface AppErrorInput {
   code: AppErrorCode;
   message: string;
   exitCode: AppExitCode;
-  recoverable: boolean;
   suggestion?: string;
   details?: unknown;
   cause?: unknown;
@@ -44,7 +41,6 @@ export interface AppErrorInput {
 export class AppError extends Error {
   readonly code: AppErrorCode;
   readonly exitCode: AppExitCode;
-  readonly recoverable: boolean;
   readonly suggestion?: string;
   readonly details?: unknown;
 
@@ -53,7 +49,6 @@ export class AppError extends Error {
     this.name = "AppError";
     this.code = input.code;
     this.exitCode = input.exitCode;
-    this.recoverable = input.recoverable;
     this.suggestion = input.suggestion;
     this.details = input.details;
   }
@@ -72,7 +67,6 @@ export function toAppError(error: unknown): AppError {
     code: "UNKNOWN_ERROR",
     message: "工具运行时发生未知错误。",
     exitCode: 2,
-    recoverable: false,
     details: error,
   });
 }

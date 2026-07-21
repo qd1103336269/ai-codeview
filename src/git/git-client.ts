@@ -51,7 +51,6 @@ export async function collectGitDiff(input: CollectGitDiffInput): Promise<string
         code: "NO_DIFF",
         message: "没有发现可审查的 diff。",
         exitCode: 0,
-        recoverable: false,
         suggestion: "请先创建或暂存代码变更，再运行 review。",
       });
     }
@@ -64,7 +63,6 @@ export async function collectGitDiff(input: CollectGitDiffInput): Promise<string
       code: "GIT_NOT_FOUND",
       message: "无法执行 Git 命令。",
       exitCode: 2,
-      recoverable: false,
       suggestion: "请安装 Git，并确认它已经加入 PATH。",
       details: error,
     });
@@ -81,7 +79,6 @@ export async function commitStagedChanges(input: CommitStagedChangesInput): Prom
       code: "GIT_COMMIT_FAILED",
       message: "Git commit 执行失败。",
       exitCode: 2,
-      recoverable: false,
       suggestion: "请检查暂存区、提交钩子和 Git 配置后重试。",
       details: error,
     });
@@ -100,7 +97,6 @@ export async function hasUnstagedChanges(input: HasUnstagedChangesInput = {}): P
         code: "GIT_NOT_FOUND",
         message: "无法执行 Git 命令。",
         exitCode: 2,
-        recoverable: false,
         suggestion: "请安装 Git，并确认它已经加入 PATH。",
         details: error,
       });
@@ -113,7 +109,6 @@ export async function hasUnstagedChanges(input: HasUnstagedChangesInput = {}): P
       code: "GIT_STATUS_FAILED",
       message: "Git status 执行失败。",
       exitCode: 2,
-      recoverable: false,
       suggestion: "请确认当前目录是 Git 仓库，并检查工作区文件权限后重试。",
       details: error,
     });
@@ -130,7 +125,6 @@ export async function stageAllChanges(input: StageAllChangesInput = {}): Promise
       code: "GIT_ADD_FAILED",
       message: "Git add 执行失败。",
       exitCode: 2,
-      recoverable: false,
       suggestion: "请检查工作区文件状态、权限和 .gitignore 配置后重试。",
       details: error,
     });
@@ -148,7 +142,6 @@ export async function pushCurrentBranch(input: PushCurrentBranchInput = {}): Pro
         code: "GIT_NOT_FOUND",
         message: "无法执行 Git 命令。",
         exitCode: 2,
-        recoverable: false,
         suggestion: "请安装 Git，并确认它已经加入 PATH。",
         details: error,
       });
@@ -159,7 +152,6 @@ export async function pushCurrentBranch(input: PushCurrentBranchInput = {}): Pro
         code: "GIT_PUSH_FAILED",
         message: "Git push 执行失败。",
         exitCode: 2,
-        recoverable: false,
         suggestion: "请检查远程仓库、网络、认证和 upstream 配置后重试。",
         details: error,
       });
@@ -171,7 +163,6 @@ export async function pushCurrentBranch(input: PushCurrentBranchInput = {}): Pro
         code: "PUSH_NO_UPSTREAM",
         message: `当前分支 ${branch} 未配置 upstream，自动设置 origin upstream 也失败。`,
         exitCode: 2,
-        recoverable: false,
         suggestion: "请手动执行 git push -u origin <branch> 配置 upstream 后重试。",
         details: upstreamError,
       });
@@ -189,7 +180,6 @@ export async function getHeadSha(input: GetHeadShaInput = {}): Promise<string> {
       code: "GIT_STATUS_FAILED",
       message: "无法读取当前 commit SHA。",
       exitCode: 2,
-      recoverable: false,
       details: error,
     });
   }
@@ -233,7 +223,6 @@ function getDiffArgs(input: CollectGitDiffInput): string[] {
         code: "INVALID_CONFIG",
         message: "base diff 模式缺少 base 分支。",
         exitCode: 2,
-        recoverable: false,
       });
     }
     return [...prefix, "diff", `${input.base}...HEAD`];
