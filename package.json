@@ -1,7 +1,7 @@
 {
   "name": "ai-codeview",
-  "version": "1.0.0",
-  "description": "面向中文用户的 DeepSeek AI 代码审查 CLI。",
+  "version": "1.2.0",
+  "description": "面向中文开发者的 AI 命令行助手，默认使用 DeepSeek。",
   "type": "module",
   "keywords": [
     "ai",

@@ -15,7 +15,6 @@ describe("runReviewCommand", () => {
         code: "NO_DIFF",
         exitCode: 0,
         message: "没有发现可审查的 diff。",
-        recoverable: false,
       }),
     );
 
@@ -164,7 +163,6 @@ describe("runReviewCommand", () => {
         code: "MISSING_API_KEY",
         exitCode: 2,
         message: "缺少 DEEPSEEK_API_KEY。",
-        recoverable: false,
         suggestion: "请先设置 DEEPSEEK_API_KEY，再运行 review。",
       }),
     );
@@ -404,6 +402,165 @@ describe("runReviewCommand", () => {
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("# AI 代码审查报告");
     await expect(access(join(cwd, "review.md"))).rejects.toThrow();
+  });
+
+  test("throws INVALID_CLI_INPUT when --fix is combined with --output", async () => {
+    const result = await runReviewCommand(
+      { fix: true, output: "report.md", format: "text" },
+      { collectGitDiff: collectGitDiffWithChange(), provider: providerReturningPass() },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("不能同时使用 --fix");
+  });
+
+  test("throws INVALID_CLI_INPUT when --fix is combined with --format json", async () => {
+    const result = await runReviewCommand(
+      { fix: true, format: "json" },
+      { collectGitDiff: collectGitDiffWithChange(), provider: providerReturningPass() },
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("不能同时使用 --fix");
+  });
+
+  test("--fix applies patch when user confirms", async () => {
+    const cwd = await makeTempDir();
+    await mkdir(join(cwd, "src"), { recursive: true });
+    await writeFile(join(cwd, "src", "a.ts"), "const a = 1;\n", "utf8");
+
+    const provider = providerReturning({
+      risk: "medium",
+      status: "fail",
+      summary: "One issue.",
+      findingCounts: { critical: 0, high: 0, medium: 1, low: 0 },
+      findings: [
+        {
+          id: "ACV-1",
+          severity: "medium",
+          confidence: "high",
+          category: "bug",
+          file: "src/a.ts",
+          line: 1,
+          title: "问题",
+          reason: "原因",
+          suggestion: "建议",
+          patch: "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,1 @@\n-const a = 1;\n+const a = 2;",
+        },
+      ],
+    });
+
+    const result = await runReviewCommand(
+      { fix: true, format: "text" },
+      {
+        collectGitDiff: collectGitDiffWithChange(),
+        provider,
+        cwd,
+        confirmFix: async () => "apply" as const,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("已应用 1 个修复");
+    const updated = await readFile(join(cwd, "src", "a.ts"), "utf8");
+    expect(updated).toContain("const a = 2;");
+  });
+
+  test("--fix skips when user says skip", async () => {
+    const provider = providerReturning({
+      risk: "medium",
+      status: "fail",
+      summary: "One issue.",
+      findingCounts: { critical: 0, high: 0, medium: 1, low: 0 },
+      findings: [
+        {
+          id: "ACV-1",
+          severity: "medium",
+          confidence: "high",
+          category: "bug",
+          file: "src/a.ts",
+          line: 1,
+          title: "问题",
+          reason: "原因",
+          suggestion: "建议",
+          patch: "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,1 @@\n-a\n+b",
+        },
+      ],
+    });
+
+    const result = await runReviewCommand(
+      { fix: true, format: "text" },
+      {
+        collectGitDiff: collectGitDiffWithChange(),
+        provider,
+        confirmFix: async () => "skip" as const,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("1 个跳过");
+  });
+
+  test("--fix skip-all exits remaining findings", async () => {
+    const provider = providerReturning({
+      risk: "high",
+      status: "fail",
+      summary: "Two issues.",
+      findingCounts: { critical: 0, high: 1, medium: 0, low: 0 },
+      findings: [
+        {
+          id: "ACV-1",
+          severity: "high",
+          confidence: "high",
+          category: "bug",
+          file: "src/a.ts",
+          line: 1,
+          title: "问题1",
+          reason: "原因",
+          suggestion: "建议",
+          patch: "--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,1 @@\n-a\n+b",
+        },
+        {
+          id: "ACV-2",
+          severity: "medium",
+          confidence: "high",
+          category: "bug",
+          file: "src/b.ts",
+          line: 1,
+          title: "问题2",
+          reason: "原因",
+          suggestion: "建议",
+          patch: "--- a/src/b.ts\n+++ b/src/b.ts\n@@ -1,1 +1,1 @@\n-c\n+d",
+        },
+      ],
+    });
+
+    const result = await runReviewCommand(
+      { fix: true, format: "text" },
+      {
+        collectGitDiff: collectGitDiffWithChange(),
+        provider,
+        confirmFix: async () => "skip-all" as const,
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain("2 个跳过");
+  });
+
+  test("--fix reports no fixable findings when AI returns no patch", async () => {
+    const provider = providerReturningPass();
+    const result = await runReviewCommand(
+      { fix: true, format: "text" },
+      {
+        collectGitDiff: collectGitDiffWithChange(),
+        provider,
+        confirmFix: async () => "apply" as const,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("没有可自动修复的 finding");
   });
 });
 

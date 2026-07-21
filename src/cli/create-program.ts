@@ -33,6 +33,7 @@ interface ReviewCliOptions {
   color?: boolean;
   allowSecrets?: boolean;
   allowExternalPath?: boolean;
+  fix?: boolean;
 }
 
 interface InitCliOptions {
@@ -44,6 +45,7 @@ interface PushCliOptions {
   dryRun?: boolean;
   push?: boolean;
   message?: string;
+  force?: boolean;
 }
 
 const progressChalk = new Chalk({ level: 1 });
@@ -60,7 +62,7 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
 
   program
     .name("ai-codeview")
-    .description("本地优先的 AI 代码审查 CLI，使用 DeepSeek 提供审查能力。")
+    .description("命令行原生的 AI 代码审查助手，数据直接发送给你配置的 AI provider。")
     .configureHelp({
       styleTitle: (title) => {
         if (title === "Usage:") return "用法：";
@@ -90,6 +92,7 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     .option("--no-color", "禁用 text 输出中的 ANSI 颜色")
     .option("--allow-secrets", "允许把包含疑似密钥的 diff 发送给 provider")
     .option("--allow-external-path", "允许审查工作目录外的绝对路径")
+    .option("--fix", "对可修复的 finding 交互式应用 AI 生成的 patch")
     .action(async (options: ReviewCliOptions) => {
       const reviewOptions: Parameters<typeof runReviewCommand>[0] = {
         staged: options.staged,
@@ -104,6 +107,7 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
         allowSecrets: options.allowSecrets,
         ...(options.stdoutOnly ? { noOutputFile: true } : {}),
         ...(options.allowExternalPath ? { allowExternalPath: true } : {}),
+        ...(options.fix ? { fix: true } : {}),
       };
       const result = await runReviewCommand(reviewOptions, {
         onProgress: (message) => {
@@ -139,12 +143,14 @@ export function createProgram(deps: CreateProgramDeps = {}): Command {
     .option("--dry-run", "只执行审查和提交信息生成，不创建 commit，不执行 push")
     .option("--no-push", "创建 commit 后不执行 git push")
     .option("-m, --message <message>", "使用指定提交信息，跳过 AI 生成和确认")
+    .option("--force", "跳过首次使用 push 的自动预演")
     .action(async (options: PushCliOptions) => {
       const pushOptions = {
         ...(options.nonInteractive ? { nonInteractive: true } : {}),
         ...(options.dryRun ? { dryRun: true } : {}),
         ...(options.push === false ? { noPush: true } : {}),
         ...(options.message !== undefined ? { message: options.message } : {}),
+        ...(options.force ? { force: true } : {}),
       };
       const result = await runPushCommand(
         pushOptions,
@@ -181,7 +187,6 @@ function emitTopLevelError(error: unknown): void {
     code: "UNKNOWN_ERROR",
     message: error instanceof Error ? error.message : "工具运行时发生未知错误。",
     exitCode: 2,
-    recoverable: false,
     cause: error,
   });
   process.stderr.write(`${appError.message}\n`);

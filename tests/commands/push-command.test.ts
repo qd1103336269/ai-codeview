@@ -11,6 +11,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockRejectedValue(
           new AppError({
             code: "NO_DIFF",
@@ -51,6 +55,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff,
         hasUnstagedChanges: vi.fn().mockResolvedValue(true),
         confirmStageChanges: vi.fn().mockResolvedValue(true),
@@ -77,6 +85,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockRejectedValue(
           new AppError({
             code: "NO_DIFF",
@@ -108,6 +120,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       { nonInteractive: true },
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockRejectedValue(
           new AppError({
             code: "NO_DIFF",
@@ -141,6 +157,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         isInteractive: false,
         collectGitDiff: vi.fn().mockRejectedValue(
           new AppError({
@@ -174,6 +194,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       { nonInteractive: true },
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider: providerReturning(failReport(), "fix: x"),
         confirmRisk,
@@ -193,6 +217,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockRejectedValue(
           new AppError({
             code: "NO_DIFF",
@@ -219,6 +247,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider: providerReturning(failReport(), "fix: x"),
         confirmRisk: vi.fn().mockResolvedValue(false),
@@ -240,6 +272,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockRejectedValue(
           new AppError({
             code: "NO_DIFF",
@@ -269,6 +305,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockRejectedValue(
           new AppError({
             code: "NO_DIFF",
@@ -306,6 +346,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider,
         confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
@@ -331,6 +375,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       { message: "feat: 使用用户指定提交信息" },
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider,
         confirmCommitMessage: vi.fn(),
@@ -355,6 +403,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       { nonInteractive: true },
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider,
         confirmCommitMessage,
@@ -379,6 +431,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       { dryRun: true },
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider,
         confirmCommitMessage,
@@ -403,6 +459,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       { dryRun: true },
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider: providerReturning(failReport(), "fix: x"),
         confirmRisk,
@@ -426,6 +486,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       { noPush: true },
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider,
         confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
@@ -447,6 +511,10 @@ describe("runPushCommand", () => {
     await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider,
         confirmCommitMessage: vi.fn().mockResolvedValue({
@@ -469,6 +537,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiffWithSecret()),
         provider,
         commitStagedChanges,
@@ -490,6 +562,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedIgnoredDiff()),
         provider,
         confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
@@ -510,6 +586,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider: providerReturning(passReport(), "feat: x"),
         confirmCommitMessage: vi.fn().mockRejectedValue(
@@ -533,6 +613,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       { message: "   " },
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider: providerReturning(passReport(), "feat: x"),
         commitStagedChanges,
@@ -553,6 +637,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider: providerReturning(passReport(), "feat: x"),
         confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
@@ -583,6 +671,10 @@ describe("runPushCommand", () => {
     const result = await runPushCommand(
       {},
       {
+        isFirstPushUse: async () => false,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+
         collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
         provider: providerReturning(passReport(), "feat: x"),
         confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
@@ -672,3 +764,137 @@ function failReport(): ReviewReport {
     ],
   };
 }
+
+describe("runPushCommand first-use behavior", () => {
+  test("first push auto dry-runs and hints to run again", async () => {
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+    const markPushUsed = vi.fn().mockResolvedValue(undefined);
+    const provider = providerReturning(passReport(), "feat: 预演");
+
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider,
+        confirmCommitMessage: vi.fn(),
+        commitStagedChanges,
+        pushCurrentBranch,
+        isFirstPushUse: async () => true,
+        markPushUsed,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("第一次使用 push");
+    expect(result.output).toContain("再次运行");
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+    expect(pushCurrentBranch).not.toHaveBeenCalled();
+    expect(markPushUsed).toHaveBeenCalledTimes(1);
+  });
+
+  test("first push with --force skips dry-run", async () => {
+    const commitStagedChanges = vi.fn().mockResolvedValue(undefined);
+    const pushCurrentBranch = vi.fn().mockResolvedValue(undefined);
+    const markPushUsed = vi.fn().mockResolvedValue(undefined);
+    const provider = providerReturning(passReport(), "feat: force");
+
+    const result = await runPushCommand(
+      { force: true },
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider,
+        confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
+        commitStagedChanges,
+        pushCurrentBranch,
+        isFirstPushUse: async () => true,
+        markPushUsed,
+        confirmCommitPreview: async () => true,
+        confirmPushPreview: async () => true,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(commitStagedChanges).toHaveBeenCalledTimes(1);
+    expect(pushCurrentBranch).toHaveBeenCalledTimes(1);
+  });
+
+  test("subsequent push shows commit preview and asks confirmation", async () => {
+    const commitStagedChanges = vi.fn().mockResolvedValue(undefined);
+    const pushCurrentBranch = vi.fn().mockResolvedValue(undefined);
+    const provider = providerReturning(passReport(), "feat: preview");
+    const confirmCommitPreview = vi.fn().mockResolvedValue(true);
+    const confirmPushPreview = vi.fn().mockResolvedValue(true);
+
+    await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider,
+        confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
+        commitStagedChanges,
+        pushCurrentBranch,
+        isFirstPushUse: async () => false,
+        markPushUsed: vi.fn().mockResolvedValue(undefined),
+        confirmCommitPreview,
+        confirmPushPreview,
+      },
+    );
+
+    expect(confirmCommitPreview).toHaveBeenCalledTimes(1);
+    expect(confirmPushPreview).toHaveBeenCalledTimes(1);
+  });
+
+  test("subsequent push cancels when commit preview rejected", async () => {
+    const commitStagedChanges = vi.fn();
+    const pushCurrentBranch = vi.fn();
+    const provider = providerReturning(passReport(), "feat: x");
+
+    const result = await runPushCommand(
+      {},
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider,
+        confirmCommitMessage: vi.fn().mockResolvedValue({ action: "confirm" }),
+        commitStagedChanges,
+        pushCurrentBranch,
+        isFirstPushUse: async () => false,
+        markPushUsed: vi.fn().mockResolvedValue(undefined),
+        confirmCommitPreview: async () => false,
+        confirmPushPreview: async () => true,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain("已取消");
+    expect(commitStagedChanges).not.toHaveBeenCalled();
+  });
+
+  test("non-interactive push shows preview without waiting", async () => {
+    const commitStagedChanges = vi.fn().mockResolvedValue(undefined);
+    const pushCurrentBranch = vi.fn().mockResolvedValue(undefined);
+    const provider = providerReturning(passReport(), "feat: non-interactive");
+    const confirmCommitPreview = vi.fn();
+    const confirmPushPreview = vi.fn();
+
+    const result = await runPushCommand(
+      { nonInteractive: true, message: "feat: auto" },
+      {
+        collectGitDiff: vi.fn().mockResolvedValue(stagedDiff()),
+        provider,
+        commitStagedChanges,
+        pushCurrentBranch,
+        isFirstPushUse: async () => false,
+        markPushUsed: vi.fn().mockResolvedValue(undefined),
+        confirmCommitPreview,
+        confirmPushPreview,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(confirmCommitPreview).not.toHaveBeenCalled();
+    expect(confirmPushPreview).not.toHaveBeenCalled();
+  });
+});

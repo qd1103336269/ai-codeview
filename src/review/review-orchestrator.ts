@@ -9,6 +9,7 @@ export interface ReviewChunksInput {
   provider: AiProvider;
   reportLanguage?: ReportLanguage;
   learningNotes?: boolean;
+  fixMode?: boolean;
   continueOnError?: boolean;
   onChunkStart?: (chunk: ReviewChunk, index: number, total: number) => void;
   onChunkComplete?: (chunk: ReviewChunk, index: number, total: number) => void;
@@ -40,6 +41,7 @@ export async function reviewChunks(input: ReviewChunksInput): Promise<ReviewChun
           files: chunk.files.map((file) => file.path),
           reportLanguage: input.reportLanguage,
           learningNotes: input.learningNotes,
+          fixMode: input.fixMode,
         }),
       });
       findings.push(...report.findings);

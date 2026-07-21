@@ -85,7 +85,6 @@ describe("DeepSeekProvider", () => {
     await expect(provider.review({ prompt: "review this" })).rejects.toMatchObject({
       code: "PROVIDER_BAD_REQUEST",
       exitCode: 2,
-      recoverable: false,
     });
     expect(create).toHaveBeenCalledTimes(1);
   });

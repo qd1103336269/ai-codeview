@@ -14,6 +14,7 @@ export const findingSchema = z.object({
   title: z.string(),
   reason: z.string(),
   suggestion: z.string(),
+  patch: z.string().optional(),
   learningNote: z.string().optional(),
 });
 

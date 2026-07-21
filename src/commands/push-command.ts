@@ -13,7 +13,8 @@ import {
   stageAllChanges as defaultStageAllChanges,
 } from "../git/git-client.js";
 import type { AiProvider } from "../providers/ai-provider.js";
-import { DeepSeekProvider } from "../providers/deepseek-provider.js";
+import "../providers/index.js";
+import { createProvider } from "../providers/registry.js";
 import { resolveExitCode } from "../report/exit-code.js";
 import { filterByConfidence } from "../report/filter-by-confidence.js";
 import { renderMarkdownReport } from "../report/markdown-report.js";
@@ -21,6 +22,7 @@ import { buildCommitMessagePrompt, sanitizeCommitMessage } from "../review/commi
 import { reviewChunks } from "../review/review-orchestrator.js";
 import type { ReviewReport } from "../review/review-schema.js";
 import { detectSecretsInDiffFiles } from "../security/detect-secrets.js";
+import { isFirstPushUse as defaultIsFirstPushUse, markPushUsed as defaultMarkPushUsed } from "../utils/first-use-marker.js";
 import type { CommandResult } from "./review-command.js";
 
 export interface PushCommandOptions {
@@ -28,6 +30,7 @@ export interface PushCommandOptions {
   dryRun?: boolean;
   noPush?: boolean;
   message?: string;
+  force?: boolean;
 }
 
 export interface CommitMessageDecision {
@@ -50,6 +53,10 @@ export interface PushCommandDeps {
   confirmStageChanges?: () => Promise<boolean>;
   confirmRisk?: (reportMarkdown: string) => Promise<boolean>;
   confirmCommitMessage?: (message: string) => Promise<CommitMessageDecision>;
+  confirmCommitPreview?: (message: string) => Promise<boolean>;
+  confirmPushPreview?: () => Promise<boolean>;
+  isFirstPushUse?: () => Promise<boolean>;
+  markPushUsed?: () => Promise<void>;
 }
 
 export async function runPushCommand(
@@ -57,8 +64,36 @@ export async function runPushCommand(
   deps: PushCommandDeps = {},
 ): Promise<CommandResult> {
   const progress = deps.onProgress ?? noopProgress;
+  const isFirstPushUse = deps.isFirstPushUse ?? defaultIsFirstPushUse;
+  const markPushUsed = deps.markPushUsed ?? defaultMarkPushUsed;
 
   try {
+    if (!options.dryRun && !options.force) {
+      const isFirst = await isFirstPushUse();
+      if (isFirst) {
+        progress("检测到首次使用 push，自动预演...");
+        const dryRunResult = await runPushCommand(
+          { ...options, dryRun: true, force: true },
+          { ...deps, isFirstPushUse: async () => false, markPushUsed },
+        );
+        if (dryRunResult.exitCode !== 0) {
+          return dryRunResult;
+        }
+        await markPushUsed();
+        return {
+          exitCode: 0,
+          output: [
+            "这是第一次使用 push，已自动预演。",
+            "",
+            dryRunResult.output,
+            "",
+            "确认无误后再次运行 acv push 真正提交推送。",
+            "如需跳过首次预演，使用 acv push --force。",
+          ].join("\n"),
+        };
+      }
+    }
+
     progress("检查 Git 状态...");
     progress("收集已暂存变更...");
     const stagedDiffResult = await collectStagedDiff(options, deps, progress);
@@ -67,7 +102,7 @@ export async function runPushCommand(
     }
     const rawDiff = stagedDiffResult.diff;
     const config = await loadConfig({ cwd: deps.cwd ?? process.cwd(), overrides: { format: "markdown" } });
-    const provider = deps.provider ?? createDeepSeekProvider(config, deps.env ?? process.env);
+    const provider = deps.provider ?? createProviderFromConfig(config, deps.env ?? process.env);
 
     progress("调用 DeepSeek 审查已暂存代码...");
     const parsed = parseGitDiff(rawDiff);
@@ -108,7 +143,6 @@ export async function runPushCommand(
         code: "EMPTY_COMMIT_MESSAGE",
         message: "提交信息为空，已取消提交。",
         exitCode: 2,
-        recoverable: false,
         suggestion: "请重新运行并填写有效提交信息，或使用 --message 指定。",
       });
     }
@@ -120,11 +154,31 @@ export async function runPushCommand(
       };
     }
 
+    if (!options.nonInteractive) {
+      const confirmCommit = await (deps.confirmCommitPreview ?? defaultConfirmCommitPreview)(message);
+      if (!confirmCommit) {
+        return { exitCode: 0, output: "已取消提交和推送。" };
+      }
+    } else {
+      progress(`即将创建 commit：${message}`);
+    }
+
     progress("创建 Git commit...");
     await (deps.commitStagedChanges ?? defaultCommitStagedChanges)({ message });
     if (options.noPush) {
       progress("已跳过 git push。");
+      await markPushUsed();
       return { exitCode: 0, output: "提交完成，未推送。" };
+    }
+
+    if (!options.nonInteractive) {
+      const confirmPush = await (deps.confirmPushPreview ?? defaultConfirmPushPreview)();
+      if (!confirmPush) {
+        progress("已创建 commit，但用户取消了 push。可执行 git reset --soft HEAD~1 回退。");
+        return { exitCode: 0, output: "已创建 commit，但取消了 push。可执行 git reset --soft HEAD~1 回退。" };
+      }
+    } else {
+      progress("即将推送到远程分支...");
     }
 
     progress("推送到远程分支...");
@@ -145,7 +199,6 @@ export async function runPushCommand(
         code: "PUSH_FAILED_ALREADY_COMMITTED",
         message: `Git commit 已创建${shaHint}，但 push 失败。`,
         exitCode: 2,
-        recoverable: false,
         suggestion: headSha
           ? `可执行 git reset --soft ${headSha}~1 回退此次提交后重试。`
           : "可执行 git reset --soft HEAD~1 回退此次提交后重试。",
@@ -153,6 +206,7 @@ export async function runPushCommand(
       });
     }
     progress("push 流程完成。");
+    await markPushUsed();
 
     return { exitCode: 0, output: "提交和推送完成。" };
   } catch (error) {
@@ -189,7 +243,6 @@ async function resolveCommitMessage(
       code: "USER_CANCELLED",
       message: "已取消提交和推送。",
       exitCode: 0,
-      recoverable: false,
     });
   }
 
@@ -223,7 +276,6 @@ function assertNoSecrets(files: ReturnType<typeof parseGitDiff>): void {
     code: "SECRET_DETECTED",
     message: `检测到疑似密钥：${location}。已在发送 staged diff 到 DeepSeek 前中止 push。`,
     exitCode: 2,
-    recoverable: false,
     suggestion: "请从 staged diff 中移除密钥；如果它是真实密钥，请先轮换密钥，然后重新暂存并运行 ai-codeview push。",
     details: findings,
   });
@@ -280,7 +332,6 @@ async function collectStagedDiff(
             code: "NO_DIFF",
             message: "没有已暂存变更，当前环境不可交互，无法确认是否执行 git add -A。请先执行 git add 后重新运行 push。",
             exitCode: 2,
-            recoverable: false,
           });
         }
 
@@ -303,7 +354,6 @@ async function collectStagedDiff(
         code: "NO_DIFF",
         message: "没有可提交变更，请先修改文件或执行 git add。",
         exitCode: 2,
-        recoverable: false,
       });
     }
     throw appError;
@@ -321,7 +371,6 @@ async function confirmStageChangesSafely(deps: PushCommandDeps): Promise<boolean
       code: "INTERACTION_FAILED",
       message: "无法读取暂存确认输入。",
       exitCode: 2,
-      recoverable: false,
       details: error,
     });
   }
@@ -340,7 +389,7 @@ function canPromptForStageChanges(options: PushCommandOptions, deps: PushCommand
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
-function createDeepSeekProvider(
+function createProviderFromConfig(
   config: Awaited<ReturnType<typeof loadConfig>>,
   env: NodeJS.ProcessEnv,
 ): AiProvider {
@@ -350,20 +399,11 @@ function createDeepSeekProvider(
       code: "MISSING_API_KEY",
       message: `缺少 ${config.apiKeyEnv}。`,
       exitCode: 2,
-      recoverable: false,
       suggestion: `请先设置 ${config.apiKeyEnv}，再运行 push。`,
     });
   }
 
-  return new DeepSeekProvider({
-    apiKey,
-    baseUrl: config.baseUrl,
-    model: config.model,
-    thinking: config.thinking,
-    reasoningEffort: config.reasoningEffort,
-    timeoutMs: config.timeoutMs,
-    maxRetries: config.maxRetries,
-  });
+  return createProvider(config, apiKey);
 }
 
 function emptyReport(): ReviewReport {
@@ -411,6 +451,21 @@ async function defaultConfirmCommitMessage(message: string): Promise<CommitMessa
   }
 
   return { action };
+}
+
+async function defaultConfirmCommitPreview(message: string): Promise<boolean> {
+  process.stdout.write(`\n即将创建 commit：\n  ${message}\n\n`);
+  return confirm({
+    message: "确认创建此 commit？",
+    default: true,
+  });
+}
+
+async function defaultConfirmPushPreview(): Promise<boolean> {
+  return confirm({
+    message: "确认推送到远程分支？",
+    default: true,
+  });
 }
 
 function noopProgress(): void {

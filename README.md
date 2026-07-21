@@ -1,6 +1,6 @@
 # AI Codeview
 
-AI Codeview 是一个本地优先的 AI 代码审查命令行工具。它可以审查本地 Git 变更，也可以审查指定路径的代码文件或目录，并使用 DeepSeek 输出中文代码审查报告。
+AI Codeview 是一个面向中文开发者的 AI 命令行助手，围绕"写完代码后的反馈 → 修复 → 提交"闭环，默认使用 DeepSeek，也可配置其他 AI provider。它可以审查本地 Git 变更，也可以审查指定路径的代码文件或目录，并输出中文代码审查报告。
 
 安装后可以使用三个等价命令：
 
@@ -20,28 +20,26 @@ acv review --staged
 | 命令 | 作用 | 常用场景 |
 | --- | --- | --- |
 | `acv review` | 审查 Git diff 或指定路径的代码，输出中文审查报告 | 提交前快速审查本地变更 |
+| `acv review --fix` | 审查后对可修复的 finding 交互式应用 AI 生成的 patch | 让 AI 帮你改完再提交 |
 | `acv push` | 审查已暂存代码后生成中文提交信息，确认后执行 commit 和 push | 一键完成审查、提交和推送 |
 | `acv doctor` | 检查 Node.js、Git、配置、API Key、remote 等本地环境 | 安装或运行失败时排查问题 |
 | `acv init` | 在当前目录生成默认配置文件 `.ai-codeview.json` | 首次使用时初始化项目配置 |
 | `acv config` | 打印合并 CLI 参数和配置文件后的最终生效配置 | 确认配置是否正确加载 |
 | `acv help` | 显示命令帮助 | 查看任意命令的选项和用法 |
 
-## 适用场景
+## 适合谁
 
-AI Codeview 适合在提交前做一次本地 AI 代码审查，帮助你发现明显 bug、安全风险、测试缺口和可维护性问题。
+- 中文开发者，希望用中文报告理解代码变更风险。
+- 个人项目或小项目，没有配置 CI，想在提交前快速让 AI 看一眼。
+- 习惯命令行工作流，希望一条命令完成审查和提交。
+- 使用 DeepSeek（默认）或其他 AI provider，想要本地 CLI 而非 Web 工具。
 
-适合：
-
-- 个人项目或小团队在提交前快速审查本地变更。
-- 希望用中文报告理解这次代码变更风险。
-- 希望在 `git commit` 和 `git push` 前增加一道轻量 gate。
-- 希望审查指定路径下的文件或目录。
-
-不适合：
+## 不适合
 
 - 替代人工 code review 或安全审计。
+- 审查跨文件影响和架构问题。每个 diff 分块独立审查，模型看不到完整代码库上下文。
 - 审查不允许发送给外部 AI provider 的敏感私有代码。
-- 在没有配置 DeepSeek API Key 的环境中直接使用 AI 审查能力。
+- 在没有配置任何 AI provider API Key 的环境中直接使用。
 
 ## 官网
 
@@ -185,11 +183,13 @@ acv review --summary
 acv review --format markdown --output review.md
 acv review --format json
 acv review --fail-on high
+acv review --fix
 acv review --stdout-only
 acv review --allow-external-path
 acv push
 acv push --dry-run
 acv push --no-push
+acv push --force
 acv push --message "feat: 更新代码审查流程"
 acv push --non-interactive --message "feat: 自动提交"
 acv doctor
@@ -262,6 +262,25 @@ acv review --path src
 - 默认拒绝工作目录外的路径，避免把本地敏感文件（如 `.ssh`、`.env`）发送给 DeepSeek。如需审查外部路径，请使用 `--allow-external-path` 或在配置中设置 `input.allowExternalPath: true`。
 - 单文件超过 `input.maxFileBytes`（默认 1MB）会被跳过，不会读入内存。
 - 路径模式会自动跳过 `.git` 目录和匹配 `ignore` 规则的子树，避免递归扫描 `node_modules` 等大目录。
+
+## 交互式修复
+
+`acv review --fix` 让 AI 对每个可修复的 finding 返回 unified diff patch，然后逐个询问你是否应用：
+
+```bash
+acv review --staged --fix
+```
+
+流程：
+
+1. 正常审查，生成 findings（prompt 会要求 AI 对可修复问题返回 patch 字段）。
+2. 对每个含 patch 的 finding，显示 patch 预览并询问：应用 / 跳过 / 跳过全部。
+3. 选"应用"则把 patch 写入对应文件；选"跳过"则忽略；选"跳过全部"则跳过剩余所有。
+4. 全部处理完后提示"已应用 N 个修复，M 个跳过，K 个应用失败。请手动 review 修改后提交。"
+
+`--fix` 不会自动 commit，只会修改工作区文件。请手动 review 修改后再提交。
+
+`--fix` 不能和 `--output`、`--stdout-only`、`--format json` 同时使用。
 
 ## 输出报告
 
@@ -358,20 +377,29 @@ git add src/index.ts
 acv push --message "feat: 更新代码审查流程"
 ```
 
+跳过首次使用 push 的自动预演（不推荐，除非你已熟悉 push 流程）：
+
+```bash
+git add src/index.ts
+acv push --force
+```
+
 流程：
 
 1. 读取 staged diff。
 2. 如果没有 staged diff 但有未暂存修改，询问是否执行 `git add -A`。
 3. 扫描疑似密钥。
-4. 调用 DeepSeek 审查代码。
+4. 调用 AI provider 审查代码。
 5. 如达到 `failOn` 阈值，询问是否继续。
 6. 生成中文 commit message。
 7. 用户确认、编辑或取消。
-8. 执行 `git commit`。
-9. 执行 `git push`。
+8. 显示 commit 预览，用户确认后执行 `git commit`。
+9. 显示 push 预览，用户确认后执行 `git push`。
 
 注意：
 
+- 首次使用 `acv push` 时会自动走 dry-run 预演，不创建 commit，不执行 push。确认无误后再次运行 `acv push` 真正提交推送。首次使用标记存储在 `~/.ai-codeview/push-used`，跨项目共享。
+- 使用 `acv push --force` 可跳过首次预演检测。
 - `push` 不会静默执行 `git add`；只有用户确认后才会执行 `git add -A`。
 - `push --non-interactive` 不会发起任何暂存确认；没有 staged diff 但存在未暂存修改时，会返回退出码 `2`，请先手动执行 `git add`。
 - `push --non-interactive` 不会发起风险确认或提交信息确认；审查达到 `failOn` 阈值时会直接中止。
@@ -409,6 +437,8 @@ AI Codeview 会查找以下配置文件：
 - `.ai-codeview.yaml`
 - `.ai-codeview.yml`
 
+AI Codeview 开箱即用，零配置即可开始审查。以下配置项均为可选。
+
 示例：
 
 ```json
@@ -419,6 +449,10 @@ AI Codeview 会查找以下配置文件：
   "apiKeyEnv": "DEEPSEEK_API_KEY",
   "timeoutMs": 60000,
   "maxRetries": 2,
+  "providerOptions": {
+    "thinking": true,
+    "reasoningEffort": "high"
+  },
   "reportLanguage": "zh-CN",
   "failOn": "high",
   "confidenceFloor": "medium",
@@ -446,18 +480,24 @@ AI Codeview 会查找以下配置文件：
 
 命令行参数优先级高于配置文件。
 
-### 配置字段说明
+### 基础配置
 
 | 字段 | 说明 |
 | --- | --- |
-| `provider` | AI provider 名称，当前默认使用 `deepseek`。 |
-| `model` | DeepSeek 模型名称。 |
-| `baseUrl` | DeepSeek API 地址，默认是 `https://api.deepseek.com`。 |
-| `apiKeyEnv` | 读取 API Key 的环境变量名，默认是 `DEEPSEEK_API_KEY`。 |
-| `timeoutMs` | DeepSeek 请求超时毫秒数，默认 `60000`。 |
-| `maxRetries` | DeepSeek 请求失败重试次数，默认 `2`，带指数退避。 |
-| `reportLanguage` | AI 报告语言，可使用 `zh-CN` 或 `en-US`，默认 `zh-CN`。同时影响报告标题、标签和 AI 输出语言。 |
+| `provider` | AI provider，默认 `deepseek`，可选 `openai`（experimental）。 |
+| `model` | 模型名称，由 provider 校验。默认 `deepseek-v4-pro`。 |
+| `apiKeyEnv` | 读取 API Key 的环境变量名，默认 `DEEPSEEK_API_KEY`。 |
+| `reportLanguage` | 报告语言，`zh-CN` 或 `en-US`，默认 `zh-CN`。 |
 | `failOn` | 严重等级 gate，达到该等级时返回退出码 `1`。 |
+
+### 进阶配置
+
+| 字段 | 说明 |
+| --- | --- |
+| `baseUrl` | AI provider API 地址，默认 `https://api.deepseek.com`。 |
+| `timeoutMs` | 请求超时毫秒数，默认 `60000`。 |
+| `maxRetries` | 请求失败重试次数，默认 `2`，带指数退避。 |
+| `providerOptions` | provider 特有参数（如 DeepSeek 的 `thinking`、`reasoningEffort`）。 |
 | `confidenceFloor` | finding 最低置信度过滤阈值，同时作用于渲染和退出码。 |
 | `review.continueOnError` | 单个分块审查失败时是否继续输出部分结果，默认 `true`。 |
 | `review.learningNotes` | 是否让 AI 生成学习说明字段，默认 `true`。 |
@@ -537,7 +577,7 @@ acv doctor --help
 acv doctor
 ```
 
-`doctor` 会检查 Node.js 版本、Git 是否可用、当前目录是否是 Git 仓库、配置是否可加载、DeepSeek API Key 是否存在，以及 `push` 所需的 Git remote 是否配置。
+`doctor` 会检查 Node.js 版本、Git 是否可用、当前目录是否是 Git 仓库、配置是否可加载、配置的 API Key 环境变量是否存在，以及 `push` 所需的 Git remote 是否配置。
 
 检查结果中：
 
@@ -547,7 +587,7 @@ acv doctor
 
 ## 版本状态
 
-当前版本：`1.0.0`
+当前版本：`1.2.0`
 
 已支持：
 
@@ -556,8 +596,9 @@ acv doctor
 - 暂存区 diff 审查。
 - Text、Markdown、JSON 输出。
 - `acv review --summary` 输出风险摘要和 finding 列表。
+- `acv review --fix` 交互式应用 AI 生成的 patch，形成"审查 → 修复"闭环。
 - `reportLanguage` 报告语言配置（zh-CN / en-US，影响报告标题、标签和 AI 输出语言）。
-- DeepSeek provider。
+- 多 AI provider 支持：默认 DeepSeek，可配置 OpenAI（experimental）。
 - 严重等级 gate。
 - 指定绝对路径文件或目录审查。
 - 指定相对路径文件或目录审查。
@@ -567,6 +608,7 @@ acv doctor
 - `acv push --dry-run` 预演模式。
 - `acv push --no-push` 只提交不推送。
 - `acv push --message` 指定提交信息。
+- `acv push --force` 跳过首次使用 push 的自动预演。
 - `acv doctor` 本地环境诊断。
 - 路径越界防护：默认拒绝工作目录外的路径，`--allow-external-path` 显式放行。
 - 单文件大小限制：`input.maxFileBytes` 默认 1MB，超限跳过。
@@ -575,9 +617,10 @@ acv doctor
 - 单文件超大 diff 按行分块，不截断单行。
 - 分块审查失败容错：默认继续输出部分结果（`review.continueOnError`）。
 - 跨 chunk 同问题去重。
-- DeepSeek 请求超时与指数退避重试（`timeoutMs`、`maxRetries` 可配置）。
+- AI 请求超时与指数退避重试（`timeoutMs`、`maxRetries` 可配置）。
 - 报告渲染转义 AI 输出，防止 Markdown 注入。
 - `confidenceFloor` 同时作用于渲染和退出码，数据口径一致。
+- push 首次使用自动 dry-run 预演，后续 push 显示 commit 和 push 预览。
 - push 失败后提示 `git reset --soft` 回滚。
 - push 无 upstream 时自动尝试 `git push -u origin <branch>`。
 - 用户取消统一返回退出码 `0`，审查不通过返回 `1`。
@@ -587,8 +630,8 @@ acv doctor
 - Commit range 审查。
 - GitHub PR / GitLab MR 审查。
 - 行内审查评论。
-- 本地模型模式。
-- 自动修复建议和交互式修复流程。
+- 本地模型模式（Ollama 等）。
+- 更多 AI provider 适配（Anthropic Claude 等）。
 
 ## 常见问题
 

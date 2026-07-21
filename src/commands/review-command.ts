@@ -10,7 +10,8 @@ import { collectGitDiff as defaultCollectGitDiff } from "../git/git-client.js";
 import { collectPathReviewFiles } from "../input/path-input.js";
 import type { PathReviewFile } from "../input/path-input.js";
 import type { AiProvider } from "../providers/ai-provider.js";
-import { DeepSeekProvider } from "../providers/deepseek-provider.js";
+import "../providers/index.js";
+import { createProvider } from "../providers/registry.js";
 import { resolveExitCode } from "../report/exit-code.js";
 import { filterByConfidence } from "../report/filter-by-confidence.js";
 import { renderJsonReport } from "../report/json-report.js";
@@ -18,7 +19,8 @@ import { renderMarkdownReport } from "../report/markdown-report.js";
 import { renderSummaryReport } from "../report/summary-report.js";
 import { renderTextReport } from "../report/text-report.js";
 import { reviewChunks, type ReviewChunksResult } from "../review/review-orchestrator.js";
-import type { ReviewReport } from "../review/review-schema.js";
+import { applyPatch, type ApplyPatchResult } from "../review/apply-patch.js";
+import type { ReviewFinding } from "../review/review-schema.js";
 import { detectSecretsInDiffFiles, detectSecretsInTextFiles } from "../security/detect-secrets.js";
 
 export interface ReviewCommandOptions {
@@ -34,6 +36,7 @@ export interface ReviewCommandOptions {
   color?: boolean;
   allowSecrets?: boolean;
   allowExternalPath?: boolean;
+  fix?: boolean;
 }
 
 export interface ReviewCommandDeps {
@@ -42,6 +45,8 @@ export interface ReviewCommandDeps {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
   onProgress?: (message: string) => void;
+  confirmFix?: (finding: ReviewFinding) => Promise<"apply" | "skip" | "skip-all">;
+  applyPatchFn?: typeof applyPatch;
 }
 
 export interface CommandResult {
@@ -66,15 +71,27 @@ export async function runReviewCommand(
         code: "INVALID_PATH_INPUT",
         message: "不能同时使用 --path 与 --staged 或 --base。",
         exitCode: 2,
-        recoverable: false,
       });
     }
     if (options.changed && (options.staged || options.base || options.path?.length)) {
       throw new AppError({
-        code: "INVALID_CONFIG",
+        code: "INVALID_CLI_INPUT",
         message: "不能同时使用 --changed 与 --staged、--base 或 --path。",
         exitCode: 2,
-        recoverable: false,
+      });
+    }
+    if (options.fix && (options.output !== undefined || options.noOutputFile)) {
+      throw new AppError({
+        code: "INVALID_CLI_INPUT",
+        message: "不能同时使用 --fix 与 --output 或 --stdout-only。",
+        exitCode: 2,
+      });
+    }
+    if (options.fix && options.format === "json") {
+      throw new AppError({
+        code: "INVALID_CLI_INPUT",
+        message: "不能同时使用 --fix 与 --format json。",
+        exitCode: 2,
       });
     }
     const outputOverride = options.output;
@@ -122,7 +139,7 @@ export async function runReviewCommand(
     const filtered = filterReviewFiles(parsed, config.ignore);
     progress("准备审查分块...");
     const chunks = chunkReviewInput(filtered.reviewable, 40_000);
-    const provider = deps.provider ?? createDeepSeekProvider(config, deps.env ?? process.env);
+    const provider = deps.provider ?? createProviderFromConfig(config, deps.env ?? process.env);
     const report =
       chunks.length > 0
         ? await reviewChunks({
@@ -130,6 +147,7 @@ export async function runReviewCommand(
             provider,
             reportLanguage: config.reportLanguage,
             learningNotes: config.review.learningNotes,
+            fixMode: options.fix,
             continueOnError: config.review.continueOnError,
             onChunkStart: (_chunk, index, total) => {
               progress(`调用 DeepSeek 审查分块 ${index}/${total}...`);
@@ -142,6 +160,16 @@ export async function runReviewCommand(
     progress("生成审查报告...");
     const { report: visibleReport, filteredOut } = filterByConfidence(report, config.confidenceFloor);
     const exitCode = resolveExitCode(visibleReport, config.failOn, config.confidenceFloor);
+
+    if (options.fix) {
+      progress("准备交互式修复...");
+      const fixResult = await runFixFlow(visibleReport, deps, cwd, progress);
+      return {
+        exitCode,
+        output: [renderReport(visibleReport, "text", false, false, config.reportLanguage, filteredOut), "", fixResult].join("\n"),
+      };
+    }
+
     const rendered = renderReport(visibleReport, config.output.format, options.color ?? false, options.summary ?? false, config.reportLanguage, filteredOut);
 
     if (config.output.file) {
@@ -154,7 +182,6 @@ export async function runReviewCommand(
           code: "OUTPUT_WRITE_FAILED",
           message: `无法写入审查报告：${outputPath}。`,
           exitCode: 2,
-          recoverable: false,
           details: error,
         });
       }
@@ -191,7 +218,6 @@ function assertNoSecrets(files: ReturnType<typeof parseGitDiff>): void {
     code: "SECRET_DETECTED",
     message: `检测到疑似密钥：${location}。已在发送 diff 到 DeepSeek 前中止审查。`,
     exitCode: 2,
-    recoverable: false,
     suggestion: "请从 diff 中移除密钥；如果它是真实密钥，请先轮换密钥，然后再运行 ai-codeview。",
     details: findings,
   });
@@ -209,33 +235,23 @@ function assertNoTextSecrets(files: PathReviewFile[]): void {
     code: "SECRET_DETECTED",
     message: `检测到疑似密钥：${location}。已在发送文件内容到 DeepSeek 前中止审查。`,
     exitCode: 2,
-    recoverable: false,
     suggestion: "请从文件中移除密钥；如果它是真实密钥，请先轮换密钥，然后再运行 ai-codeview。",
     details: findings,
   });
 }
 
-function createDeepSeekProvider(config: AiCodeviewConfig, env: NodeJS.ProcessEnv): AiProvider {
+function createProviderFromConfig(config: AiCodeviewConfig, env: NodeJS.ProcessEnv): AiProvider {
   const apiKey = env[config.apiKeyEnv];
   if (!apiKey) {
     throw new AppError({
       code: "MISSING_API_KEY",
       message: `缺少 ${config.apiKeyEnv}。`,
       exitCode: 2,
-      recoverable: false,
       suggestion: `请先设置 ${config.apiKeyEnv}，再运行 review。`,
     });
   }
 
-  return new DeepSeekProvider({
-    apiKey,
-    baseUrl: config.baseUrl,
-    model: config.model,
-    thinking: config.thinking,
-    reasoningEffort: config.reasoningEffort,
-    timeoutMs: config.timeoutMs,
-    maxRetries: config.maxRetries,
-  });
+  return createProvider(config, apiKey);
 }
 
 function renderReport(
@@ -294,4 +310,58 @@ function emptyReport(): ReviewChunksResult {
 
 function noopProgress(): void {
   // Intentionally empty: command logic can emit progress without forcing CLI output in tests.
+}
+
+async function runFixFlow(
+  report: ReviewReport,
+  deps: ReviewCommandDeps,
+  cwd: string,
+  progress: (message: string) => void,
+): Promise<string> {
+  const fixableFindings = report.findings.filter((f) => f.patch);
+  if (fixableFindings.length === 0) {
+    return "没有可自动修复的 finding（AI 未返回 patch）。";
+  }
+
+  const confirmFix = deps.confirmFix ?? defaultConfirmFix;
+  const applyPatchFn = deps.applyPatchFn ?? applyPatch;
+  let applied = 0;
+  let skipped = 0;
+  let failed = 0;
+  let skipAll = false;
+
+  for (const finding of fixableFindings) {
+    if (skipAll) {
+      skipped += 1;
+      continue;
+    }
+    const decision = await confirmFix(finding);
+    if (decision === "skip-all") {
+      skipAll = true;
+      skipped += 1;
+      continue;
+    }
+    if (decision === "skip") {
+      skipped += 1;
+      continue;
+    }
+    const result: ApplyPatchResult = await applyPatchFn(finding.file, finding.patch!, cwd);
+    if (result.success) {
+      applied += 1;
+      progress(`已应用修复：${finding.id}`);
+    } else {
+      failed += 1;
+      progress(`修复应用失败：${finding.id}（${result.error}）`);
+    }
+  }
+
+  return `已应用 ${applied} 个修复，${skipped} 个跳过，${failed} 个应用失败。请手动 review 修改后提交。`;
+}
+
+async function defaultConfirmFix(finding: ReviewFinding): Promise<"apply" | "skip" | "skip-all"> {
+  const { confirm } = await import("@inquirer/prompts");
+  const location = finding.line ? `${finding.file}:${finding.line}` : finding.file;
+  process.stdout.write(`\n${finding.id} [${finding.severity.toUpperCase()}] ${location}\n${finding.title}\n${finding.patch}\n`);
+  const answer = await confirm({ message: "应用此修复？", default: false });
+  return answer ? "apply" : "skip";
 }

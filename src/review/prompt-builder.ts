@@ -6,14 +6,18 @@ export interface BuildReviewPromptInput {
   files: string[];
   reportLanguage?: ReportLanguage;
   learningNotes?: boolean;
+  fixMode?: boolean;
 }
 
 export function buildReviewPrompt(input: BuildReviewPromptInput): string {
   const reportLanguage = input.reportLanguage ?? "zh-CN";
   const learningNotesEnabled = input.learningNotes ?? true;
-  const findingFields = learningNotesEnabled
-    ? "每个 finding 必须包含：id, severity, confidence, category, file, title, reason, suggestion，并可选包含 line 和 learningNote。"
-    : "每个 finding 必须包含：id, severity, confidence, category, file, title, reason, suggestion，并可选包含 line。";
+  const fixMode = input.fixMode ?? false;
+  const findingFields = [
+    "每个 finding 必须包含：id, severity, confidence, category, file, title, reason, suggestion，并可选包含 line",
+    learningNotesEnabled ? "和 learningNote" : "",
+    fixMode ? "。对于可以自动修复的 finding，请额外提供 patch 字段，内容是 unified diff 格式的补丁，以 --- a/<file> 和 +++ b/<file> 开头，包含 @@ hunk 头。只对有明确修复方案的 finding 提供 patch，不确定的不要提供。" : "。",
+  ].join("");
   const exampleFinding: Record<string, unknown> = {
     id: "TEMP-1",
     severity: "medium",
@@ -25,6 +29,9 @@ export function buildReviewPrompt(input: BuildReviewPromptInput): string {
     reason: "说明为什么这里有风险。",
     suggestion: "说明如何修复。",
   };
+  if (fixMode) {
+    exampleFinding.patch = "--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1,1 +1,1 @@\n-old line\n+new line";
+  }
   if (learningNotesEnabled) {
     exampleFinding.learningNote = "可选学习说明。";
   }
